@@ -246,6 +246,24 @@ function apiErrorMessage(detail:unknown):string {
   return 'Binance Demo isteği doğrulanamadı. Emir alanlarını kontrol edin.'
 }
 
+function isNormalRequestCancellation(error:unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') return true
+  if (error && typeof error === 'object') {
+    const name = (error as {name?: unknown}).name
+    if (typeof name === 'string' && name.toLowerCase() === 'aborterror') return true
+  }
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase()
+    return message.includes('abort') || message.includes('canceled') || message.includes('cancelled')
+  }
+  return false
+}
+
+function readableErrorMessage(error:unknown, fallback:string): string {
+  if (isNormalRequestCancellation(error)) return ''
+  return error instanceof Error ? error.message : fallback
+}
+
 async function apiCall<T>(path:string, options?:RequestInit):Promise<T> {
   const response = await fetch(`${API}${path}`, options)
   const payload:unknown = await response.json().catch(() => ({}))
@@ -345,8 +363,10 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
       const result = await response.json().catch(() => null) as {detail?:unknown}|null
       if (!response.ok) throw new Error(typeof result?.detail === 'string' ? result.detail : 'Demo credential kaydedilemedi.')
       await refreshStatus(); setMessage('Demo API credential güvenli şekilde kaydedildi.'); setMessageKind('ok')
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Demo credential kaydedilemedi.'); setMessageKind('error') }
-    finally { setBusy(false) }
+    } catch (error) {
+      const message = readableErrorMessage(error, 'Demo credential kaydedilemedi.')
+      if (message) { setMessage(message); setMessageKind('error') }
+    } finally { setBusy(false) }
   }
 
   const testDemoConnection = async () => {
@@ -367,8 +387,10 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
       if (!activateResponse.ok) throw new Error('Demo bağlantısı aktifleştirilemedi.')
       await apiCall('/connect',{method:'POST'}); await refreshStatus()
       setMessage('DEMO BAĞLI · Binance Demo/Testnet bağlantısı doğrulandı.'); setMessageKind('ok')
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Demo bağlantısı doğrulanamadı.'); setMessageKind('error') }
-    finally { setBusy(false) }
+    } catch (error) {
+      const message = readableErrorMessage(error, 'Demo bağlantısı doğrulanamadı.')
+      if (message) { setMessage(message); setMessageKind('error') }
+    } finally { setBusy(false) }
   }
   const refreshAccount = async (quiet=true) => {
     const requestId = ++accountRefreshId.current
@@ -379,7 +401,10 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
     } catch (error) {
       if (requestId !== accountRefreshId.current) return
       setAccount(null)
-      if (!quiet) { setMessage(error instanceof Error ? error.message : 'Demo hesap okunamadı.'); setMessageKind('error') }
+      if (!quiet) {
+        const message = readableErrorMessage(error, 'Demo hesap okunamadı.')
+        if (message) { setMessage(message); setMessageKind('error') }
+      }
     }
   }
   const refreshV21 = async (quiet=true) => {
@@ -391,13 +416,19 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
       setSettingsDraft(current => current || payload.settings)
       return payload
     } catch (error) {
-      if (!quiet) { setMessage(error instanceof Error ? error.message : 'V21 merkezi okunamadı.');setMessageKind('error') }
+      if (!quiet) {
+        const message = readableErrorMessage(error, 'V21 merkezi okunamadı.')
+        if (message) { setMessage(message); setMessageKind('error') }
+      }
       return null
     }
   }
   const refreshPerformance = async (period=performancePeriod) => {
     try { setPerformance(await v21Call<V21Performance>(`/performance?period=${period}`)) }
-    catch (error) { setMessage(error instanceof Error ? error.message : 'Performans verisi alınamadı.');setMessageKind('error') }
+    catch (error) {
+      const message = readableErrorMessage(error, 'Performans verisi alınamadı.')
+      if (message) { setMessage(message); setMessageKind('error') }
+    }
   }
 
   const requestScannerScan = async () => {
@@ -408,7 +439,10 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
       initialScanRequested.current = true
       await refreshV21(true)
     } catch (error) {
-      if (!initialScanRequested.current) setMessage(error instanceof Error ? error.message : 'İlk scanner taraması başlatılamadı.')
+      if (!initialScanRequested.current) {
+        const message = readableErrorMessage(error, 'İlk scanner taraması başlatılamadı.')
+        if (message) setMessage(message)
+      }
     } finally { initialScanInFlight.current = false }
   }
 
@@ -514,7 +548,8 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
       setForm(current => ({...current,direction,limitPrice:String(plan.entry),stop:String(plan.stop_loss),tp1:String(plan.tp1),tp2:String(plan.tp2),tp3:String(plan.tp3)}))
       setMessage('Giriş, Stop ve TP1–TP3 güncel analizden dolduruldu. Göndermeden önce mutlaka kontrol edin.');setMessageKind('ok')
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Güncel analiz planı alınamadı.');setMessageKind('error')
+      const message = readableErrorMessage(error, 'Güncel analiz planı alınamadı.')
+      if (message) { setMessage(message); setMessageKind('error') }
     } finally {setBusy(false)}
   }
 
@@ -549,7 +584,10 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
   const runAction = async (action:() => Promise<unknown>,success:string) => {
     setBusy(true);setMessageKind('info');setMessage('İşlem Binance Futures Demo üzerinde doğrulanıyor…')
     try { await action();setMessage(success);setMessageKind('ok');await refreshStatus();await refreshAccount(true) }
-    catch (error) { setMessage(error instanceof Error ? error.message : 'İşlem tamamlanamadı.');setMessageKind('error') }
+    catch (error) {
+      const message = readableErrorMessage(error, 'İşlem tamamlanamadı.')
+      if (message) { setMessage(message); setMessageKind('error') }
+    }
     finally { setBusy(false) }
   }
 
@@ -587,8 +625,10 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
         const summary = result as V21Summary;setV21(summary);setSettingsDraft(summary.settings)
       } else await refreshV21(true)
       setMessage(success);setMessageKind('ok')
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'V21 işlemi tamamlanamadı.');setMessageKind('error') }
-    finally { setV21Busy(false) }
+    } catch (error) {
+      const message = readableErrorMessage(error, 'V21 işlemi tamamlanamadı.')
+      if (message) { setMessage(message); setMessageKind('error') }
+    } finally { setV21Busy(false) }
   }
 
   const saveSettings = () => {
@@ -600,7 +640,10 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
     setV21Busy(true)
     v21Call<V21RiskPreview>('/risk/size',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol,entry:analysis.entry,stop:analysis.stop_loss,max_loss_usdt:numberValue(riskLoss),leverage:resolveLeverage(form.leverage,form.customLeverage)})})
       .then(payload => {setRiskPreview(payload);setMessage('Maksimum kayba göre Demo pozisyon boyutu hesaplandı.');setMessageKind('ok')})
-      .catch(error => {setMessage(error instanceof Error ? error.message : 'Risk hesabı yapılamadı.');setMessageKind('error')})
+      .catch(error => {
+        const message = readableErrorMessage(error, 'Risk hesabı yapılamadı.')
+        if (message) { setMessage(message); setMessageKind('error') }
+      })
       .finally(() => setV21Busy(false))
   }
   const toggleAuto = () => {
@@ -626,7 +669,10 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
     setV21Busy(true)
     v21Call<{orders:Record<string,unknown>[];algo_orders:Record<string,unknown>[];trades:Record<string,unknown>[]}>(`/history/${symbol}`)
       .then(payload => {setHistoryPayload(payload);setMessage(`${symbol} Demo emir ve dolum geçmişi getirildi.`);setMessageKind('ok')})
-      .catch(error => {setMessage(error instanceof Error ? error.message : 'Demo geçmişi alınamadı.');setMessageKind('error')})
+      .catch(error => {
+        const message = readableErrorMessage(error, 'Demo geçmişi alınamadı.')
+        if (message) { setMessage(message); setMessageKind('error') }
+      })
       .finally(() => setV21Busy(false))
   }
   const runDrill = (kind:'RECONNECT'|'EMERGENCY'|'PROTECTION') => runV21(
