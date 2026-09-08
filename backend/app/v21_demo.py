@@ -1066,7 +1066,7 @@ def return_correlation(left: list[dict[str, float]], right: list[dict[str, float
     return numerator / denominator if denominator else 0.0
 
 
-async def automatic_cycle(application: Any) -> None:
+async def automatic_cycle(application: Any, *, request: Request | None = None) -> None:
     state = application.state.v21_demo
     settings = state["settings"]
     auto = state["auto"]
@@ -1094,7 +1094,7 @@ async def automatic_cycle(application: Any) -> None:
         _set_rejection(state, "DAILY_LOSS_LIMIT", "Günlük Demo zarar limiti aktif; yeni giriş kilitli.")
         auto["enabled"] = False
         return
-    client = client_for(application)
+    client = client_for(request if request is not None else application)
     snapshot = await account_snapshot(client)
     refresh_daily_risk_state(state, float(snapshot.get("wallet_balance") or snapshot.get("available_balance") or 0))
     if state["auto"].get("status") == "PAUSED":
@@ -1702,7 +1702,7 @@ async def v21_auto_start(request: Request, body: AutoStartRequest) -> dict[str, 
     record_event(state, "AUTO_START", "V21 kontrollü otomasyon kullanıcı onayıyla açıldı.", source="USER")
     emit_notification(state, "AUTO_STARTED", "Demo Auto Trade başlatıldı.", event_id=f"{today()}-auto-start-{int(time.time())}")
     persist_state(state)
-    await automatic_cycle(request.app)
+    await automatic_cycle(request.app, request=request)
     return summary_payload(state)
 
 

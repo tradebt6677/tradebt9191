@@ -15,7 +15,7 @@ os.environ.setdefault("PROTREBOT_VAULT_MASTER_KEY", "demo-vault-master-secret-12
 
 from app.binance_demo import credentials_configured
 from app.exchange_connections import SaveCredentialsRequest, exchange_connection_save, session_credentials
-from app.v21_demo import AutoStartRequest, v21_auto_start
+from app.v21_demo import AutoStartRequest, automatic_cycle, v21_auto_start
 
 
 class DemoSessionSecurityTests(unittest.TestCase):
@@ -135,6 +135,71 @@ class DemoSessionSecurityTests(unittest.TestCase):
         self.assertIs(configured_mock.call_args.args[0], request)
         self.assertTrue(result["auto"]["enabled"])
         self.assertEqual(result["auto"]["status"], "ON")
+
+    @patch("app.v21_demo.persist_state")
+    @patch("app.v21_demo.account_snapshot", new_callable=AsyncMock)
+    @patch("app.v21_demo.scan_demo_universe", new_callable=AsyncMock)
+    @patch("app.v21_demo.client_for")
+    def test_automatic_cycle_uses_authenticated_request_credentials(self, client_for_mock, scan_demo_universe_mock, account_snapshot_mock, persist_state_mock):
+        application = SimpleNamespace(
+            state=SimpleNamespace(
+                binance_demo={"armed_until": time.time() + 60},
+                http=AsyncMock(),
+                v21_demo={
+                    "settings": {
+                        "max_loss_per_trade": 5.0,
+                        "max_margin_per_trade": 50.0,
+                        "schedule_start_hour": 0,
+                        "schedule_end_hour": 24,
+                        "scan_seconds": 900,
+                        "allowed_symbols": ["BTCUSDT"],
+                        "allow_long": True,
+                        "allow_short": True,
+                        "daily_loss_limit": 30.0,
+                        "daily_trade_limit": 6,
+                        "max_positions": 3,
+                        "min_confidence": 78,
+                        "max_volatility_pct": 3.5,
+                        "max_correlation_pct": 82,
+                        "breakeven_enabled": True,
+                        "breakeven_trigger_r": 1.0,
+                        "trailing_enabled": False,
+                        "trailing_trigger_r": 1.5,
+                        "trailing_distance_r": 0.75,
+                        "notifications": True,
+                        "fee_bps_per_side": 4.0,
+                        "slippage_bps_per_side": 2.0,
+                        "consecutive_loss_limit": 3,
+                        "kill_switch": False,
+                    },
+                    "auto": {"enabled": True, "user_confirmed": True, "busy": False, "cycles": 0, "last_error": None, "rejection_gate": None, "rejection_reason": None, "status": "ON", "pause_reason": None, "last_decision": ""},
+                    "risk": {"consecutive_losses": 0, "consecutive_loss_limit": 3, "kill_switch": False},
+                    "scanner": {"active": False, "running": False, "scan_status": "BEKLEMEDE", "coins_scanned": 0, "selected_symbols": [], "top_candidates": [], "all_candidates": [], "last_stage": "BEKLEMEDE", "eligible_count": 0, "last_error": None, "last_scan_at": None, "next_scan_at": None},
+                    "paper_positions": [],
+                    "automation_trades": [],
+                    "journal": [],
+                    "seen_event_ids": [],
+                    "notifications": {"seen": [], "unread": 0},
+                    "duplicate_blocks": 0,
+                    "duplicate_submissions": 0,
+                    "protection_repairs": 0,
+                    "last_saved": None,
+                },
+            )
+        )
+        request = SimpleNamespace(
+            app=application,
+            headers={"authorization": "Bearer demo-session-token"},
+            state=SimpleNamespace(member={"id": "user-1", "role": "OWNER"}),
+        )
+        client_for_mock.return_value = object()
+        account_snapshot_mock.return_value = {"wallet_balance": 1000.0, "available_balance": 1000.0, "positions": [], "open_orders": [], "hedge_mode": False}
+        scan_demo_universe_mock.return_value = []
+
+        asyncio.run(automatic_cycle(application, request=request))
+
+        self.assertTrue(client_for_mock.called)
+        self.assertIs(client_for_mock.call_args.args[0], request)
 
 
 if __name__ == "__main__":
