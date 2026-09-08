@@ -333,7 +333,6 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
     if (!apiKey || !secretKey) { setMessage('Demo API Key ve Secret Key gerekli.'); setMessageKind('error'); return }
     if (status?.connections?.TESTNET?.active || status?.connections?.TESTNET?.configured) {
       setMessage('Demo/Testnet credential zaten bu oturum için aktif ve kullanılabilir.'); setMessageKind('ok');
-      setDemoCredentials({apiKey:'',secretKey:''});
       await refreshStatus();
       return
     }
@@ -345,7 +344,6 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
       const response = await fetch(`${API_BASE}/exchange-connections/save`,{method:'POST',headers,body:JSON.stringify(payload)})
       const result = await response.json().catch(() => null) as {detail?:unknown}|null
       if (!response.ok) throw new Error(typeof result?.detail === 'string' ? result.detail : 'Demo credential kaydedilemedi.')
-      setDemoCredentials({apiKey:'',secretKey:''});
       await refreshStatus(); setMessage('Demo API credential güvenli şekilde kaydedildi.'); setMessageKind('ok')
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Demo credential kaydedilemedi.'); setMessageKind('error') }
     finally { setBusy(false) }
