@@ -995,7 +995,7 @@ def validate_entry_risk(
 ) -> None:
     """Final fail-closed gate shared by manual and automatic Demo entries."""
     symbol = normalize_symbol(body.symbol)
-    allowed = {normalize_symbol(value) for value in settings.get("allowed_symbols", [])}
+    allowed = {normalize_symbol(value) for value in settings.get("_auto_universe", settings.get("allowed_symbols", []))}
     if symbol not in allowed:
         raise BinanceDemoError(f"{symbol} izinli pariteler dışında; emir açılmadı.", http_status=409)
     if body.direction == "LONG" and not settings.get("allow_long", True):

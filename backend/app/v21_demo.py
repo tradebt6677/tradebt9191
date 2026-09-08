@@ -62,7 +62,7 @@ migrate_legacy_files(("v21_demo_state.json", "v21_demo_state.backup.json"))
 STATE_PATH = DATA_DIR / "v21_demo_state.json"
 BACKUP_PATH = DATA_DIR / "v21_demo_state.backup.json"
 JOURNAL_LIMIT = 1200
-SCAN_INTERVAL_SECONDS = 600
+SCAN_INTERVAL_SECONDS = 900
 AUTO_TRADE_SYMBOLS = (
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
     "ADAUSDT", "AVAXUSDT", "LINKUSDT", "LTCUSDT", "BCHUSDT", "DOTUSDT",
@@ -71,6 +71,11 @@ AUTO_TRADE_SYMBOLS = (
 )
 AUTO_TRADE_SYMBOL_SET = frozenset(AUTO_TRADE_SYMBOLS)
 MAX_SIGNAL_AGE_SECONDS = 2 * 60 * 60
+DAILY_LOSS_LIMIT_PCT = 20.0
+DAILY_LOSS_THRESHOLDS = (5.0, 10.0, 15.0, 20.0)
+BLOCKED_AUTO_BASE_ASSETS = frozenset({
+    "USDC", "USDT", "BUSD", "USDP", "TUSD", "FDUSD", "DAI", "UST", "USTC",
+})
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "allowed_symbols": list(AUTO_TRADE_SYMBOLS),
@@ -79,6 +84,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "max_loss_per_trade": 5.0,
     "max_margin_per_trade": 50.0,
     "daily_loss_limit": 30.0,
+    "daily_loss_limit_pct": DAILY_LOSS_LIMIT_PCT,
     "daily_trade_limit": 6,
     "max_positions": 3,
     "min_confidence": 78,
@@ -108,6 +114,7 @@ class SettingsUpdate(BaseModel):
     max_loss_per_trade: float | None = Field(default=None, ge=0.5, le=25)
     max_margin_per_trade: float | None = Field(default=None, ge=5, le=100)
     daily_loss_limit: float | None = Field(default=None, ge=5, le=250)
+    daily_loss_limit_pct: float | None = Field(default=None, ge=20, le=20)
     daily_trade_limit: int | None = Field(default=None, ge=1, le=30)
     max_positions: int | None = Field(default=None, ge=1, le=3)
     min_confidence: int | None = Field(default=None, ge=60, le=95)
@@ -169,8 +176,10 @@ def initial_state() -> dict[str, Any]:
             "user_confirmed": False, "confirmation": None,
             "last_decision": "Kullanıcı onayı bekleniyor.", "last_error": None,
             "rejection_gate": None, "rejection_reason": None,
+            "status": "OFF", "pause_reason": None, "started_at": None,
         },
         "risk": {"consecutive_losses": 0, "consecutive_loss_limit": 3, "kill_switch": False},
+        "notifications": {"seen": [], "unread": 0},
         "scanner": {
             "active": False, "running": False, "scan_status": "BEKLEMEDE", "coins_scanned": 0,
             "scan_duration_ms": 0, "last_scan_at": None, "next_scan_at": None,
@@ -212,11 +221,15 @@ def load_state() -> dict[str, Any]:
         "journal", "seen_event_ids", "backtest", "drills", "duplicate_blocks",
         "duplicate_submissions", "protection_repairs", "scanner", "automation_trades", "paper_positions",
         "risk",
+        "notifications",
     ):
         if key in saved:
             base[key] = saved[key]
     # Entry automation is intentionally never restored after a restart.
     base["auto"]["enabled"] = False
+    base["auto"]["status"] = "OFF"
+    base["auto"]["pause_reason"] = None
+    base["auto"]["started_at"] = None
     base["auto"]["user_confirmed"] = False
     base["auto"]["confirmation"] = None
     base["auto"]["last_decision"] = "Güvenli yeniden başlatma: DEMO OTOMATİK onayı bekleniyor."
@@ -229,6 +242,8 @@ def load_state() -> dict[str, Any]:
     base["risk"].setdefault("consecutive_losses", 0)
     base["risk"].setdefault("consecutive_loss_limit", 3)
     base["risk"].setdefault("kill_switch", False)
+    base["notifications"].setdefault("seen", [])
+    base["notifications"].setdefault("unread", 0)
     return base
 
 
@@ -243,6 +258,7 @@ def serializable_state(state: dict[str, Any]) -> dict[str, Any]:
         "duplicate_submissions": state.get("duplicate_submissions", 0),
         "protection_repairs": state.get("protection_repairs", 0),
         "risk": state.get("risk", {}),
+        "notifications": state.get("notifications", {}),
         "scanner": state.get("scanner", {}),
         "automation_trades": state.get("automation_trades", [])[:100],
         "paper_positions": state.get("paper_positions", []),
@@ -313,6 +329,50 @@ def record_event(
     return item
 
 
+def emit_notification(state: dict[str, Any], kind: str, message: str, *, event_id: str) -> dict[str, Any] | None:
+    notifications = state.setdefault("notifications", {"seen": [], "unread": 0})
+    seen = notifications.setdefault("seen", [])
+    if event_id in seen:
+        return None
+    seen.append(event_id)
+    del seen[:-400]
+    notifications["unread"] = int(notifications.get("unread", 0)) + 1
+    return record_event(state, "NOTIFICATION", message, reason=f"{kind}:{event_id}", event_id=f"notification-{event_id}", source="NOTIFICATION")
+
+
+def daily_loss_percent(state: dict[str, Any], balance_reference: float) -> float:
+    if balance_reference <= 0:
+        return 0.0
+    realized = daily_metrics(state)["realized_pnl"]
+    return max(0.0, round((-realized / balance_reference) * 100, 4))
+
+
+def refresh_daily_risk_state(state: dict[str, Any], balance_reference: float) -> dict[str, Any]:
+    day = today()
+    risk = state.setdefault("risk", {})
+    if risk.get("date") != day:
+        risk.update({"date": day, "daily_base_balance": balance_reference, "last_warning_pct": 0.0, "daily_loss_pct": 0.0})
+        state.setdefault("notifications", {"seen": [], "unread": 0})["seen"] = []
+    if float(risk.get("daily_base_balance") or 0) <= 0 and balance_reference > 0:
+        risk["daily_base_balance"] = balance_reference
+    reference = float(risk.get("daily_base_balance") or balance_reference or 0)
+    loss_pct = daily_loss_percent(state, reference)
+    risk["daily_loss_pct"] = loss_pct
+    for threshold in DAILY_LOSS_THRESHOLDS:
+        if loss_pct >= threshold and threshold > float(risk.get("last_warning_pct") or 0):
+            message = {
+                5.0: "Günlük zararınız %5 seviyesine ulaştı. Risk seviyenizi kontrol etmeniz önerilir.",
+                10.0: "Günlük zararınız %10 seviyesine ulaştı. Auto Trade risk seviyenizi kontrol ediniz.",
+                15.0: "Günlük zararınız %15 seviyesine ulaştı. Günlük zarar limitine yaklaşıyorsunuz.",
+                20.0: "Günlük zararınız %20 seviyesine ulaştı. Yeni otomatik işlemler güvenlik amacıyla durduruldu.",
+            }[threshold]
+            emit_notification(state, f"DAILY_LOSS_{int(threshold)}", message, event_id=f"{day}-daily-loss-{int(threshold)}")
+            risk["last_warning_pct"] = threshold
+    if loss_pct >= DAILY_LOSS_LIMIT_PCT:
+        state["auto"].update({"enabled": False, "status": "PAUSED", "pause_reason": "DAILY_LOSS_20"})
+    return {"loss_pct": loss_pct, "limit_pct": DAILY_LOSS_LIMIT_PCT, "last_warning_pct": risk.get("last_warning_pct", 0.0), "paused": state["auto"].get("status") == "PAUSED"}
+
+
 def client_for(application: Any) -> BinanceDemoClient:
     api_key, secret_key = load_demo_credentials()
     return BinanceDemoClient(application.state.http, api_key, secret_key)
@@ -342,6 +402,36 @@ def normalize_candles(rows: Any) -> list[dict[str, float]]:
 async def demo_candles(client: BinanceDemoClient, symbol: str, interval: str, limit: int) -> list[dict[str, float]]:
     rows = await client.public_get("/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": limit})
     return normalize_candles(rows)
+
+
+def dynamic_auto_universe(exchange_info: Any, tickers: Any, settings: dict[str, Any]) -> list[str]:
+    ticker_by_symbol = {
+        str(item.get("symbol")): item for item in response_rows(tickers) if item.get("symbol")
+    }
+    configured = {normalize_symbol(value) for value in settings.get("allowed_symbols", AUTO_TRADE_SYMBOLS)}
+    use_dynamic_default = configured == AUTO_TRADE_SYMBOL_SET
+    eligible: list[tuple[str, float]] = []
+    rows = exchange_info.get("symbols", []) if isinstance(exchange_info, dict) else []
+    for item in rows if isinstance(rows, list) else []:
+        symbol = str(item.get("symbol") or "")
+        base_asset = str(item.get("baseAsset") or "").upper()
+        if (
+            item.get("status") != "TRADING"
+            or item.get("contractType") != "PERPETUAL"
+            or item.get("quoteAsset") != "USDT"
+            or base_asset in BLOCKED_AUTO_BASE_ASSETS
+            or not symbol.endswith("USDT")
+            or (not use_dynamic_default and symbol not in configured)
+        ):
+            continue
+        try:
+            volume = float(ticker_by_symbol.get(symbol, {}).get("quoteVolume") or 0)
+        except (TypeError, ValueError):
+            volume = 0.0
+        if volume > 0:
+            eligible.append((symbol, volume))
+    eligible.sort(key=lambda item: item[1], reverse=True)
+    return [symbol for symbol, _ in eligible[:100]]
 
 
 def _candidate_confidence_label(confidence: int) -> str:
@@ -444,23 +534,8 @@ async def scan_demo_universe(client: BinanceDemoClient, occupied: set[str], sett
         client.public_get("/fapi/v1/exchangeInfo"),
         client.public_get("/fapi/v1/ticker/24hr"),
     )
-    exchange_symbols = exchange_info.get("symbols", []) if isinstance(exchange_info, dict) else exchange_info
-    ticker_by_symbol = {
-        str(item.get("symbol")): item for item in response_rows(tickers)
-        if item.get("symbol")
-    }
-    symbols = []
-    allowed = AUTO_TRADE_SYMBOL_SET.intersection(
-        normalize_symbol(value) for value in settings.get("allowed_symbols", AUTO_TRADE_SYMBOLS)
-    )
-    for item in exchange_symbols if isinstance(exchange_symbols, list) else []:
-        if item.get("status") != "TRADING" or item.get("contractType") != "PERPETUAL":
-            continue
-        symbol = str(item.get("symbol") or "")
-        if item.get("quoteAsset") == "USDT" and symbol.endswith("USDT") and symbol in allowed and symbol not in occupied:
-            symbols.append(symbol)
-    symbols.sort(key=lambda value: float(ticker_by_symbol.get(value, {}).get("quoteVolume") or 0), reverse=True)
-    symbols = symbols[:100]
+    symbols = [symbol for symbol in dynamic_auto_universe(exchange_info, tickers, settings) if symbol not in occupied]
+    settings["_auto_universe"] = symbols
 
     async def evaluate(symbol: str) -> dict[str, Any] | None:
         try:
@@ -530,17 +605,9 @@ async def auto_trade_market_universe(application: Any) -> list[dict[str, Any]]:
     ticker_by_symbol = {
         str(item.get("symbol")): item for item in response_rows(tickers) if item.get("symbol")
     }
+    settings = getattr(application.state, "v21_demo", {}).get("settings", DEFAULT_SETTINGS)
     markets: list[dict[str, Any]] = []
-    rows = exchange_info.get("symbols", []) if isinstance(exchange_info, dict) else []
-    for item in rows if isinstance(rows, list) else []:
-        symbol = str(item.get("symbol") or "")
-        if (
-            symbol not in AUTO_TRADE_SYMBOL_SET
-            or item.get("status") != "TRADING"
-            or item.get("contractType") != "PERPETUAL"
-            or item.get("quoteAsset") != "USDT"
-        ):
-            continue
+    for symbol in dynamic_auto_universe(exchange_info, tickers, settings):
         ticker = ticker_by_symbol.get(symbol, {})
         markets.append({
             "symbol": symbol,
@@ -555,7 +622,8 @@ async def auto_trade_market_universe(application: Any) -> list[dict[str, Any]]:
 def candidate_is_tradeable(candidate: dict[str, Any], settings: dict[str, Any]) -> bool:
     symbol = str(candidate.get("symbol") or "").upper()
     direction = str(candidate.get("direction") or "NEUTRAL").upper()
-    if symbol not in AUTO_TRADE_SYMBOL_SET:
+    allowed_symbols = {normalize_symbol(value) for value in settings.get("_auto_universe", settings.get("allowed_symbols", AUTO_TRADE_SYMBOLS))}
+    if symbol not in allowed_symbols:
         return False
     if direction not in {"LONG", "SHORT"} or candidate.get("status") != "SELECTED":
         return False
@@ -583,17 +651,19 @@ def candidate_is_tradeable(candidate: dict[str, Any], settings: dict[str, Any]) 
 def automatic_risk_block(state: dict[str, Any]) -> tuple[str, str] | None:
     risk = state.setdefault("risk", {})
     if bool(risk.get("kill_switch") or state["settings"].get("kill_switch", False)):
+        state["auto"].update({"status": "PAUSED", "pause_reason": "KILL_SWITCH"})
+        emit_notification(state, "KILL_SWITCH", "Demo Auto Trade kill switch aktif; yeni otomatik girişler durduruldu.", event_id=f"{today()}-kill-switch")
         return "KILL_SWITCH", "Demo kill switch aktif; yeni otomatik giriş kilitli."
     consecutive_limit = min(3, int(state["settings"].get("consecutive_loss_limit", risk.get("consecutive_loss_limit", 3))))
     if int(risk.get("consecutive_losses", 0)) >= consecutive_limit:
+        state["auto"].update({"status": "PAUSED", "pause_reason": "CONSECUTIVE_LOSSES"})
+        emit_notification(state, "CONSECUTIVE_LOSSES", "Üç ardışık Demo zararı nedeniyle Auto Trade duraklatıldı.", event_id=f"{today()}-consecutive-losses")
         return "CONSECUTIVE_LOSSES", "Ardışık Demo zarar koruması aktif; yeni otomatik giriş kilitli."
     return None
 
 
 def select_auto_candidates(ranked: list[dict[str, Any]], settings: dict[str, Any], occupied: set[str], limit: int = MAX_OPEN_POSITIONS) -> list[dict[str, Any]]:
-    allowed_symbols = AUTO_TRADE_SYMBOL_SET.intersection(
-        normalize_symbol(value) for value in settings.get("allowed_symbols", AUTO_TRADE_SYMBOLS)
-    )
+    allowed_symbols = {normalize_symbol(value) for value in settings.get("_auto_universe", settings.get("allowed_symbols", AUTO_TRADE_SYMBOLS))}
     selected: list[dict[str, Any]] = []
     seen: set[str] = set()
     ordered = sorted(ranked, key=lambda item: float(item.get("score", item.get("opportunity_score", 0)) or 0), reverse=True)
@@ -606,6 +676,39 @@ def select_auto_candidates(ranked: list[dict[str, Any]], settings: dict[str, Any
         if len(selected) >= min(MAX_OPEN_POSITIONS, max(0, int(limit))):
             break
     return selected
+
+
+def safe_rotation_symbols(snapshot: dict[str, Any], desired_symbols: set[str], plans: dict[str, dict[str, Any]]) -> list[str]:
+    """Return only profitable/break-even Auto plans eligible for rotation."""
+    safe: list[str] = []
+    for position in snapshot.get("positions", []):
+        symbol = str(position.get("symbol") or "")
+        plan = next((item for item in plans.values() if item.get("symbol") == symbol and item.get("source") == "AUTO_SCANNER" and item.get("position_status") != "CLOSED"), None)
+        if not plan or symbol in desired_symbols:
+            continue
+        if float(position.get("unrealized_pnl") or 0) >= 0:
+            safe.append(symbol)
+    return safe
+
+
+async def rotate_safe_demo_positions(application: Any, snapshot: dict[str, Any], desired_symbols: set[str]) -> int:
+    state = application.state.binance_demo
+    symbols = safe_rotation_symbols(snapshot, desired_symbols, state.get("plans", {}))
+    if not symbols:
+        return 0
+    client = client_for(application)
+    rotated = 0
+    for symbol in symbols:
+        if await close_symbol_position(client, symbol) is None:
+            continue
+        for plan in state.get("plans", {}).values():
+            if plan.get("symbol") == symbol and plan.get("source") == "AUTO_SCANNER":
+                plan.update({"status": "KAPANDI", "position_status": "CLOSED", "remaining_quantity": "0", "closed_at": utc_now(), "close_reason": "SAFE_ROTATION"})
+        rotated += 1
+        emit_notification(application.state.v21_demo, "ROTATION", f"{symbol} güvenli rotasyonla kapatıldı; mevcut korumalar önceliklendirildi.", event_id=f"{today()}-rotation-{symbol}-{int(time.time() // SCAN_INTERVAL_SECONDS)}")
+    if rotated:
+        persist_runtime(state)
+    return rotated
 
 
 def daily_metrics(state: dict[str, Any]) -> dict[str, Any]:
@@ -969,21 +1072,36 @@ async def automatic_cycle(application: Any) -> None:
         return
     client = client_for(application)
     snapshot = await account_snapshot(client)
+    refresh_daily_risk_state(state, float(snapshot.get("wallet_balance") or snapshot.get("available_balance") or 0))
+    if state["auto"].get("status") == "PAUSED":
+        _set_rejection(state, state["auto"].get("pause_reason") or "DAILY_LOSS_20", "Günlük Demo zarar koruması aktif; yeni otomatik giriş kilitli.")
+        persist_state(state)
+        return
     max_positions = min(settings["max_positions"], MAX_OPEN_POSITIONS)
     pending_entries = sum(1 for item in snapshot.get("open_orders", []) if not bool(item.get("reduce_only", False)))
     pending_entries += len(state.get("paper_positions", []))
     available_slots = max_positions - len(snapshot["positions"]) - pending_entries
-    if available_slots <= 0:
-        _set_rejection(state, "MAX_POSITIONS", "Açık pozisyon sınırı dolu.")
-        state["scanner"].update({"active": True, "last_stage": "DOLU", "selected_symbols": []})
-        persist_state(state)
-        return
     occupied = {item["symbol"] for item in snapshot["positions"] + snapshot["open_orders"]}
     state["scanner"].update({"active": True, "last_stage": "TARAMA", "selected_symbols": []})
-    ranked = await scan_demo_universe(client, occupied, settings)
-    allowed_symbols = AUTO_TRADE_SYMBOL_SET.intersection(
-        normalize_symbol(value) for value in settings.get("allowed_symbols", AUTO_TRADE_SYMBOLS)
-    )
+    ranked = await scan_demo_universe(client, set(), settings)
+    allowed_symbols = {normalize_symbol(value) for value in settings.get("_auto_universe", settings.get("allowed_symbols", AUTO_TRADE_SYMBOLS))}
+    desired_symbols = {
+        str(candidate.get("symbol")) for candidate in ranked
+        if candidate_is_tradeable(candidate, settings)
+    }
+    desired_symbols = set(sorted(desired_symbols, key=lambda symbol: next((float(item.get("score", 0) or 0) for item in ranked if item.get("symbol") == symbol), 0), reverse=True)[:MAX_OPEN_POSITIONS])
+    if available_slots <= 0:
+        rotated = await rotate_safe_demo_positions(application, snapshot, desired_symbols)
+        if rotated:
+            snapshot = await account_snapshot(client)
+            occupied = {item["symbol"] for item in snapshot["positions"] + snapshot["open_orders"]}
+            pending_entries = sum(1 for item in snapshot.get("open_orders", []) if not bool(item.get("reduce_only", False)))
+            available_slots = max_positions - len(snapshot["positions"]) - pending_entries - len(state.get("paper_positions", []))
+        if available_slots <= 0:
+            _set_rejection(state, "MAX_POSITIONS", "Açık pozisyon sınırı dolu; zarardaki Auto pozisyonlar rotasyon için kapatılmadı.")
+            state["scanner"].update({"active": True, "last_stage": "DOLU", "selected_symbols": []})
+            persist_state(state)
+            return
     top_candidates = select_auto_candidates(ranked, settings, occupied, available_slots)
     if not top_candidates:
         disallowed = next((candidate for candidate in ranked if normalize_symbol(candidate.get("symbol", "")) not in allowed_symbols), None)
@@ -1069,6 +1187,7 @@ async def run_scanner_cycle(application: Any) -> None:
     await scan_lock.acquire()
     start = time.perf_counter()
     scanner.update({"running": True, "active": True, "scan_status": "TARAMA", "last_error": None})
+    emit_notification(state, "SCAN_STARTED", "Demo Auto Trade market taraması başladı.", event_id=f"{today()}-scan-{int(time.time() // SCAN_INTERVAL_SECONDS)}")
     try:
         settings = state["settings"]
         client = market_client_for(application)
@@ -1353,10 +1472,12 @@ def summary_payload(state: dict[str, Any]) -> dict[str, Any]:
     }
     return {
         "version": "21.0.0", "mode": "BINANCE_FUTURES_DEMO_ONLY", "settings": state["settings"],
-        "auto": state["auto"], "scanner": scanner_payload, "stream": state["stream"], "daily": daily_metrics(state),
+        "auto": state["auto"], "risk": state.get("risk", {}), "notifications": state.get("notifications", {}),
+        "scanner": scanner_payload, "stream": state["stream"], "daily": daily_metrics(state),
         "account": {
             "wallet_balance": snapshot.get("wallet_balance"), "available_balance": snapshot.get("available_balance"),
             "unrealized_pnl": snapshot.get("unrealized_pnl"), "positions": len(snapshot.get("positions", [])) + len(paper_positions),
+            "auto_positions": len({str(trade.get("symbol")) for trade in state.get("automation_trades", []) if str(trade.get("status") or "").upper() not in {"KAPANDI", "CLOSED", "İPTAL"}}),
             "reconciled_active_positions": int(reconciliation.get("reconciled_active_positions", len(snapshot.get("positions", [])))) + len(paper_positions),
             "normal_orders": len(snapshot.get("open_orders", [])), "algo_orders": len(snapshot.get("open_algo_orders", [])),
         },
@@ -1546,12 +1667,16 @@ async def v21_auto_start(request: Request, body: AutoStartRequest) -> dict[str, 
         raise HTTPException(409, "Demo hesabı One-way / Tek Yön modunda olmalı.")
     state["auto"].update({
         "enabled": True,
+        "status": "ON",
+        "pause_reason": None,
+        "started_at": state["auto"].get("started_at") or now_iso(),
         "user_confirmed": True,
         "confirmation": confirmation,
         "last_decision": "Kontrollü Demo taraması başlatıldı.",
         "last_error": None,
     })
     record_event(state, "AUTO_START", "V21 kontrollü otomasyon kullanıcı onayıyla açıldı.", source="USER")
+    emit_notification(state, "AUTO_STARTED", "Demo Auto Trade başlatıldı.", event_id=f"{today()}-auto-start-{int(time.time())}")
     persist_state(state)
     await automatic_cycle(request.app)
     return summary_payload(state)
@@ -1562,11 +1687,14 @@ async def v21_auto_stop(request: Request) -> dict[str, Any]:
     state = state_for(request)
     state["auto"].update({
         "enabled": False,
+        "status": "OFF",
+        "pause_reason": None,
         "user_confirmed": False,
         "confirmation": None,
         "last_decision": "Yeni otomatik Demo girişleri durduruldu.",
     })
     record_event(state, "AUTO_STOP", "V21 otomatik girişleri durduruldu; mevcut Stop/TP korumaları açık.", source="USER")
+    emit_notification(state, "AUTO_STOPPED", "Demo Auto Trade durduruldu; mevcut korumalar açık.", event_id=f"{today()}-auto-stop-{int(time.time())}")
     persist_state(state)
     return summary_payload(state)
 

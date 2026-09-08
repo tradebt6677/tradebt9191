@@ -175,7 +175,8 @@ class V21DemoSafetyTests(unittest.TestCase):
 
     def test_demo_scanner_uses_exchange_symbols_and_auto_source(self):
         self.assertIn('exchange_info.get("symbols", [])', V21_SOURCE)
-        self.assertIn('symbols = symbols[:100]', V21_SOURCE)
+        self.assertIn('eligible[:100]', V21_SOURCE)
+        self.assertIn('dynamic_auto_universe', V21_SOURCE)
         self.assertIn('source="AUTO_SCANNER"', V21_SOURCE)
         self.assertIn('"opportunity_score"', V21_SOURCE)
         self.assertIn('"top_candidates": top_candidates', V21_SOURCE)

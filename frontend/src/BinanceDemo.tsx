@@ -135,25 +135,27 @@ type FormState = {
 
 type V21Settings = {
   allowed_symbols:string[];allow_long:boolean;allow_short:boolean;max_loss_per_trade:number;max_margin_per_trade:number
-  daily_loss_limit:number;daily_trade_limit:number;max_positions:number;min_confidence:number;max_volatility_pct:number
+  daily_loss_limit:number;daily_loss_limit_pct?:number;daily_trade_limit:number;max_positions:number;min_confidence:number;max_volatility_pct:number
   max_correlation_pct:number;schedule_start_hour:number;schedule_end_hour:number;scan_seconds:number
   breakeven_enabled:boolean;breakeven_trigger_r:number;trailing_enabled:boolean;trailing_trigger_r:number
-  trailing_distance_r:number;notifications:boolean;fee_bps_per_side:number;slippage_bps_per_side:number
+  trailing_distance_r:number;notifications:boolean;fee_bps_per_side:number;slippage_bps_per_side:number;consecutive_loss_limit?:number;kill_switch?:boolean
 }
 
 type V21Journal = {id:string;created_at:string;kind:string;symbol?:string|null;status?:string|null;side?:string|null;price?:number|null;quantity?:number|null;realized_pnl?:number|null;reason?:string|null;message:string;source:string;reduce_only:boolean}
 type V21Gate = {name:string;passed:boolean;value:string|number;target:string|number}
 type ScannerCandidate = {rank:number;symbol:string;score:number;direction:string;confidence:string;confidence_value:number;trend:string;mtf_trend:string;volume:number;volume_ratio:number;rsi:number;status:string;reasons:string[];entry?:number;stop_loss?:number;tp1?:number;tp2?:number;tp3?:number}
-type ScannerState = {scan_status:string;last_scan_at:string|null;next_scan_at:string|null;scan_interval_seconds:number;coins_scanned:number;selected_count:number;scan_duration_seconds:number;top_candidates:ScannerCandidate[];all_candidates:ScannerCandidate[];last_error:string|null}
+type ScannerState = {scan_status:string;running?:boolean;last_scan_at:string|null;next_scan_at:string|null;scan_interval_seconds:number;coins_scanned:number;selected_count:number;eligible_count?:number;scan_duration_seconds:number;top_candidates:ScannerCandidate[];all_candidates:ScannerCandidate[];last_error:string|null}
 type AutomationTrade = {symbol:string;side:string;scanner_rank:number;scanner_score:number;confidence:string;entry_time:string;entry_price:string|number;margin:number;leverage:number;tp:(string|number)[];sl:string|number;trade_reason:string[];status:string}
 type V21Backtest = {symbol:string;interval:string;trades:number;wins:number;win_rate:number;net_pnl:number;ending_equity:number;max_drawdown_pct:number;profit_factor:number;no_lookahead:boolean;folds:{name:string;trades:number;net_pnl:number}[];recent_trades:{signal_time:number;entry_time:number;exit_time:number;direction:string;entry:number;exit:number;reason:string;pnl:number;cost_usdt:number;regime:string}[];note:string}
 type V21Summary = {
   version:string;mode:string;settings:V21Settings
-  auto:{enabled:boolean;busy:boolean;cycles:number;last_scan:string|null;last_decision:string;last_error:string|null}
+  auto:{enabled:boolean;busy:boolean;cycles:number;last_scan:string|null;last_decision:string;last_error:string|null;status?:string;pause_reason?:string|null;started_at?:string|null}
+  risk?:{daily_loss_pct?:number;last_warning_pct?:number;consecutive_losses?:number;consecutive_loss_limit?:number;kill_switch?:boolean}
+  notifications?:{unread?:number}
   scanner:ScannerState
   stream:{status:string;transport:string;last_event:string|null;last_sync:string|null;reconnect_count:number;error_count:number;last_error:string|null}
   daily:{date:string;auto_entries:number;events:number;realized_pnl:number;remaining_loss_budget:number}
-  account:{wallet_balance:number|null;available_balance:number|null;unrealized_pnl:number|null;positions:number;reconciled_active_positions?:number;normal_orders:number;algo_orders:number}
+  account:{wallet_balance:number|null;available_balance:number|null;unrealized_pnl:number|null;positions:number;auto_positions?:number;reconciled_active_positions?:number;normal_orders:number;algo_orders:number}
   protection:{repairs:number;duplicate_blocks:number};journal:V21Journal[];backtest:V21Backtest|null
   certificate:{version:string;status:string;score:number;passed_gates:number;total_gates:number;gates:V21Gate[];reason:string;generated_at:string};automation_trades:AutomationTrade[]
   last_saved:string|null;real_trading_locked:boolean
@@ -166,7 +168,7 @@ const initialForm:FormState = {
   direction:'LONG',orderType:'MARKET',margin:'50',leverage:'2',limitPrice:'',stop:'',tp1:'',tp2:'',tp3:'',
 }
 
-const SCAN_INTERVAL_SECONDS = 600
+const SCAN_INTERVAL_SECONDS = 900
 const normalizeV21Settings = (settings:V21Settings):V21Settings => ({...settings,scan_seconds:Number.isFinite(settings.scan_seconds) && settings.scan_seconds >= SCAN_INTERVAL_SECONDS ? settings.scan_seconds : SCAN_INTERVAL_SECONDS})
 const fmt = (value?:number|null) => value === undefined || value === null || !Number.isFinite(value) ? '—' : value.toLocaleString('tr-TR',{maximumFractionDigits:value < 10 ? 5 : 2})
 const stamp = (value?:string|null) => value ? new Date(value).toLocaleString('tr-TR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—'
@@ -579,6 +581,11 @@ export default function BinanceDemo({active,symbol,analysis,chart}:{active:boole
     return alerts.slice(0, 6)
   }, [account, status, v21])
 
+  const autoStatus = v21?.auto.status || (v21?.auto.enabled ? 'ON' : 'OFF')
+  const autoStatusLabel = autoStatus === 'PAUSED'
+    ? ({DAILY_LOSS_20:'GÜNLÜK ZARAR LİMİTİ',CONSECUTIVE_LOSSES:'3 ARDIŞIK ZARAR',KILL_SWITCH:'KILL SWITCH'} as Record<string,string>)[v21?.auto.pause_reason || ''] || 'RİSK NEDENİYLE DURAKLATILDI'
+    : autoStatus === 'ON' ? (v21?.scanner.running ? 'TARAMA YAPIYOR' : 'AKTİF') : 'DURDURULDU'
+
   const formatHealthState = (state: string) => {
     if (state === 'HEALTHY') return 'healthy'
     if (state === 'DEGRADED') return 'degraded'
@@ -633,6 +640,21 @@ export default function BinanceDemo({active,symbol,analysis,chart}:{active:boole
       <span><small>RİSK BÜTÇESİ</small><b>{fmt(v21?.daily.remaining_loss_budget)} USDT</b></span>
       <span><small>DEMO KANIT</small><b>%{v21?.certificate.score ?? 0}</b></span>
       <strong>GERÇEK PARA: 0 USDT · GERÇEK EMİR KANALI YOK</strong>
+    </section>
+
+    <section className="v21Card v21AutoBotDashboard" aria-label="Auto Trade Bot">
+      <header><div><span>DEMO / TESTNET ONLY</span><h2>AUTO TRADE BOT</h2></div><b className={autoStatus === 'ON' ? 'v21Running' : autoStatus === 'PAUSED' ? 'demoLoss' : 'v21Stopped'}>{autoStatusLabel}</b></header>
+      <div className="v21AutoBotGrid">
+        <div><small>AUTO TRADE</small><strong>{v21?.auto.enabled ? 'ON' : 'OFF'}</strong><button className={v21?.auto.enabled ? 'stop' : ''} disabled={v21Busy || (!v21?.auto.enabled && !status?.armed)} onClick={toggleAuto}>{v21?.auto.enabled ? 'DURDUR' : 'AÇ'}</button></div>
+        <div><small>TARAMA</small><strong>~{v21?.scanner.coins_scanned || 100} COIN</strong><span>{v21?.scanner.last_scan_at ? `Son ${stamp(v21.scanner.last_scan_at)}` : 'Bekleniyor'}</span></div>
+        <div><small>SONRAKİ TARAMA</small><strong>{stamp(v21?.scanner.next_scan_at)}</strong><span>15 dakika</span></div>
+        <div><small>UYGUN ADAY</small><strong>{v21?.scanner.eligible_count ?? 0}</strong><span>En iyi {v21?.scanner.top_candidates.length ?? 0}/3</span></div>
+        <div><small>AÇIK AUTO İŞLEM</small><strong>{v21?.account.auto_positions ?? 0}/3</strong><span>Manual işlemler ayrı korunur</span></div>
+        <div><small>GÜNLÜK RİSK</small><strong>%{fmt(v21?.risk?.daily_loss_pct ?? 0)} / %20</strong><span>Son uyarı %{fmt(v21?.risk?.last_warning_pct ?? 0)}</span></div>
+        <div><small>ARDIŞIK ZARAR</small><strong>{v21?.risk?.consecutive_losses ?? 0}/3</strong><span>{v21?.auto.pause_reason || 'Koruma açık'}</span></div>
+        <div><small>BİLDİRİM</small><strong>{v21?.notifications?.unread ?? 0}</strong><span>Demo event</span></div>
+      </div>
+      <div className="v21AutoBotCandidates">{v21?.scanner.top_candidates.length ? v21.scanner.top_candidates.slice(0,3).map((candidate,index) => <span key={candidate.symbol}><b>{index + 1}. {candidate.symbol}</b><em>{candidate.direction} · {candidate.score}</em></span>) : <span>Sinyal bekleniyor.</span>}</div>
     </section>
 
     <section className="v21CockpitSummary" aria-label="Paper Trading Cockpit Summary">

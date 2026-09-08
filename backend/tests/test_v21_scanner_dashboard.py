@@ -247,7 +247,7 @@ class V21ScannerDashboardTests(unittest.TestCase):
         self.assertEqual(len(state["paper_positions"]), 1)
 
     def test_scanner_interval_and_candidate_score_contract(self):
-        self.assertEqual(v21_demo.SCAN_INTERVAL_SECONDS, 600)
+        self.assertEqual(v21_demo.SCAN_INTERVAL_SECONDS, 900)
         candidates = v21_demo._enrich_scan_candidates([
             {"symbol": "LOWUSDT", "direction": "BEKLE", "opportunity_score": -10, "confidence": 20},
             {"symbol": "TOPUSDT", "direction": "LONG", "opportunity_score": 130, "confidence": 88,
@@ -267,7 +267,7 @@ class V21ScannerDashboardTests(unittest.TestCase):
         state["scanner"]["scan_duration_ms"] = 1250
         state["automation_trades"] = [{"symbol": "BTCUSDT", "scanner_rank": 1}]
         payload = v21_demo.summary_payload(state)
-        self.assertEqual(payload["scanner"]["scan_interval_seconds"], 600)
+        self.assertEqual(payload["scanner"]["scan_interval_seconds"], 900)
         self.assertEqual(payload["scanner"]["selected_count"], 1)
         self.assertEqual(payload["scanner"]["scan_duration_seconds"], 1.25)
         self.assertEqual(payload["automation_trades"][0]["scanner_rank"], 1)
@@ -313,7 +313,7 @@ class V21ScannerDashboardTests(unittest.TestCase):
         order.assert_not_awaited()
         self.assertIn("onayıyla", state["auto"]["last_decision"])
 
-    def test_auto_start_triggers_immediate_scan_and_600_second_schedule(self):
+    def test_auto_start_triggers_immediate_scan_and_900_second_schedule(self):
         state = v21_demo.initial_state()
         state["settings"]["scan_seconds"] = 30
         app = SimpleNamespace(state=SimpleNamespace(v21_demo=state, binance_demo={}, http=object()))
@@ -343,7 +343,7 @@ class V21ScannerDashboardTests(unittest.TestCase):
         self.assertIsNotNone(state["scanner"]["next_scan_at"])
         completion = __import__("datetime").datetime.fromisoformat(state["scanner"]["last_scan_at"].replace("Z", "+00:00"))
         next_scan = __import__("datetime").datetime.fromisoformat(state["scanner"]["next_scan_at"].replace("Z", "+00:00"))
-        self.assertEqual((next_scan - completion).total_seconds(), 600)
+        self.assertEqual((next_scan - completion).total_seconds(), 900)
 
     def test_scan_candidate_state_updates_when_new_response_arrives(self):
         state = v21_demo.initial_state()
