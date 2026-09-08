@@ -520,6 +520,38 @@ async def scan_demo_universe(client: BinanceDemoClient, occupied: set[str], sett
     return _enrich_scan_candidates(results)
 
 
+async def auto_trade_market_universe(application: Any) -> list[dict[str, Any]]:
+    """Return the Demo-supported Auto Trade universe for read-only UI use."""
+    client = market_client_for(application)
+    exchange_info, tickers = await asyncio.gather(
+        client.public_get("/fapi/v1/exchangeInfo"),
+        client.public_get("/fapi/v1/ticker/24hr"),
+    )
+    ticker_by_symbol = {
+        str(item.get("symbol")): item for item in response_rows(tickers) if item.get("symbol")
+    }
+    markets: list[dict[str, Any]] = []
+    rows = exchange_info.get("symbols", []) if isinstance(exchange_info, dict) else []
+    for item in rows if isinstance(rows, list) else []:
+        symbol = str(item.get("symbol") or "")
+        if (
+            symbol not in AUTO_TRADE_SYMBOL_SET
+            or item.get("status") != "TRADING"
+            or item.get("contractType") != "PERPETUAL"
+            or item.get("quoteAsset") != "USDT"
+        ):
+            continue
+        ticker = ticker_by_symbol.get(symbol, {})
+        markets.append({
+            "symbol": symbol,
+            "display": symbol.replace("USDT", "/USDT"),
+            "price": float(ticker.get("lastPrice") or 0),
+            "change": float(ticker.get("priceChangePercent") or 0),
+            "volume": float(ticker.get("quoteVolume") or 0),
+        })
+    return sorted(markets, key=lambda item: item["volume"], reverse=True)
+
+
 def candidate_is_tradeable(candidate: dict[str, Any], settings: dict[str, Any]) -> bool:
     symbol = str(candidate.get("symbol") or "").upper()
     direction = str(candidate.get("direction") or "NEUTRAL").upper()
@@ -1368,6 +1400,15 @@ async def shutdown_v21_demo(application: Any) -> None:
 @router.get("/summary")
 async def v21_summary(request: Request) -> dict[str, Any]:
     return summary_payload(state_for(request))
+
+
+@router.get("/markets")
+async def v21_markets(request: Request) -> dict[str, Any]:
+    try:
+        markets = await auto_trade_market_universe(request.app)
+        return {"markets": markets, "count": len(markets), "demo_only": True}
+    except BinanceDemoError as exc:
+        raise safe_exchange_error(exc) from exc
 
 
 @router.get("/scanner")

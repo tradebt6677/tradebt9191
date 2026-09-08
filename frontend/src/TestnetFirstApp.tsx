@@ -100,6 +100,7 @@ export default function TestnetFirstApp() {
   const [view,setView] = useState<View>('testnet')
   const [markets,setMarkets] = useState<Market[]>([])
   const [symbol,setSymbol] = useState('BTCUSDT')
+  const [marketQuery,setMarketQuery] = useState('')
   const [interval,setInterval] = useState('15m')
   const [analysis,setAnalysis] = useState<Analysis|null>(null)
   const [health,setHealth] = useState<Health|null>(null)
@@ -109,10 +110,15 @@ export default function TestnetFirstApp() {
     setLoading(true)
     try {
       const [marketResponse,healthResponse] = await Promise.all([
-        fetch(`${API_BASE}/markets?limit=12`),
+        fetch(`${API_BASE}/v21/markets`),
         fetch(`${API_BASE}/health`),
       ])
-      if (marketResponse.ok) setMarkets(await marketResponse.json() as Market[])
+      if (marketResponse.ok) {
+        const payload = await marketResponse.json() as {markets?:Market[]}
+        setMarkets(Array.isArray(payload.markets) ? payload.markets : [])
+      } else {
+        setMarkets([])
+      }
       if (healthResponse.ok) setHealth(await healthResponse.json() as Health)
     } finally {setLoading(false)}
   }
@@ -150,7 +156,10 @@ export default function TestnetFirstApp() {
     {view === 'testnet' && <>
       <section className="v26MarketBar">
         <div className="v26MarketTitle"><Activity/><span><small>SEÇİLİ TESTNET PAZARI</small><b>{symbol.replace('USDT','/USDT')}</b></span><strong className={analysis?.direction === 'SHORT' ? 'short' : analysis?.direction === 'LONG' ? 'long' : ''}>{analysis?.direction || 'HESAPLANIYOR'} <em>%{analysis?.confidence ?? 0}</em></strong></div>
-        <div className="v26MarketPicker">{markets.slice(0,6).map(market => <button key={market.symbol} className={market.symbol === symbol ? 'active' : ''} onClick={() => setSymbol(market.symbol)}><b>{market.display}</b><span>{format(market.price)}</span><em className={market.change >= 0 ? 'up' : 'down'}>{market.change >= 0 ? '+' : ''}{market.change.toFixed(2)}%</em></button>)}</div>
+        <div className="v26MarketPicker">
+          <input aria-label="Testnet market search" placeholder="Sembol ara" value={marketQuery} onChange={event => setMarketQuery(event.target.value)} />
+          {markets.filter(market => `${market.display} ${market.symbol}`.toUpperCase().includes(marketQuery.trim().toUpperCase())).map(market => <button key={market.symbol} className={market.symbol === symbol ? 'active' : ''} onClick={() => setSymbol(market.symbol)}><b>{market.display}</b><span>{format(market.price)}</span><em className={market.change >= 0 ? 'up' : 'down'}>{market.change >= 0 ? '+' : ''}{market.change.toFixed(2)}%</em></button>)}
+        </div>
         <div className="v26Intervals">{['1m','5m','15m','1h','4h'].map(item => <button key={item} className={interval === item ? 'active' : ''} onClick={() => setInterval(item)}>{item}</button>)}</div>
       </section>
       <Suspense fallback={<div className="v26Loading"><RefreshCw className="spin"/>Testnet merkezi hazırlanıyor…</div>}>
