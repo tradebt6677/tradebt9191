@@ -13,6 +13,7 @@ sys.path.insert(0, str(BACKEND))
 
 os.environ.setdefault("PROTREBOT_VAULT_MASTER_KEY", "demo-vault-master-secret-123456")
 
+from app.binance_demo import credentials_configured
 from app.exchange_connections import SaveCredentialsRequest, exchange_connection_save, session_credentials
 from app.v21_demo import AutoStartRequest, v21_auto_start
 
@@ -72,6 +73,20 @@ class DemoSessionSecurityTests(unittest.TestCase):
         api_key, secret_key = session_credentials(request, "TESTNET", active_only=False)
         self.assertEqual(api_key, "abcdefghijklmnopqrstuvwxyz")
         self.assertEqual(secret_key, "1234567890abcdef")
+
+    @patch("app.binance_demo.load_demo_credentials")
+    @patch("app.exchange_connections.session_credentials_for_request")
+    def test_authenticated_request_does_not_fallback_to_global_demo_credentials(self, session_credentials_mock, load_demo_credentials_mock):
+        session_credentials_mock.return_value = ("", "")
+        load_demo_credentials_mock.return_value = ("legacy-api-key", "legacy-secret-key")
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(http=AsyncMock())),
+            headers={"authorization": "Bearer demo-session-token"},
+            state=SimpleNamespace(member={"id": "user-1", "role": "OWNER"}),
+        )
+
+        self.assertFalse(credentials_configured(request))
+        load_demo_credentials_mock.assert_not_called()
 
     @patch("app.v21_demo.emit_notification")
     @patch("app.v21_demo.record_event")

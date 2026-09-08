@@ -206,11 +206,14 @@ def credentials_configured(request: Request | None = None) -> bool:
         try:
             from .exchange_connections import session_credentials_for_request
 
+            member = getattr(request.state, "member", None)
             api_key, secret_key = session_credentials_for_request(request, "TESTNET")
-            if getattr(request.state, "member", None) is not None:
+            if member is not None:
                 return bool(api_key and secret_key)
         except (ImportError, RuntimeError, ValueError):
             pass
+        if getattr(request.state, "member", None) is not None:
+            return False
     api_key, secret_key = load_demo_credentials()
     return len(api_key) >= 10 and len(secret_key) >= 10
 
@@ -388,7 +391,16 @@ def client_for(request: Request) -> BinanceDemoClient:
         api_key, secret_key = session_credentials_for_request(request, "TESTNET")
     except (ImportError, RuntimeError, ValueError):
         api_key, secret_key = "", ""
-    if not has_member_session and (not api_key or not secret_key):
+
+    if has_member_session:
+        if not api_key or not secret_key:
+            raise BinanceDemoError(
+                "Demo API bağlantısı aktif değil. Programdaki Borsa Bağlantıları bölümünden Testnet anahtarını kaydedip aktifleştirin.",
+                http_status=412,
+            )
+        return BinanceDemoClient(request.app.state.http, api_key, secret_key)
+
+    if not api_key or not secret_key:
         api_key, secret_key = load_demo_credentials()
     return BinanceDemoClient(request.app.state.http, api_key, secret_key)
 
