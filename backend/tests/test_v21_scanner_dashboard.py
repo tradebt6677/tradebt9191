@@ -15,9 +15,16 @@ from app.binance_demo import MANUAL_MAX_LEVERAGE, MAX_NOTIONAL_USDT, BinanceDemo
 
 
 ROOT_FRONTEND = Path(__file__).parents[2] / "BinanceDemo.tsx"
+ROOT_FRONTEND_CSS = Path(__file__).parents[2] / "binance-demo.css"
 
 
 class V21ScannerDashboardTests(unittest.TestCase):
+    def test_auto_trade_dashboard_mount_is_visible_outside_legacy_wrapper(self):
+        source = ROOT_FRONTEND.read_text(encoding="utf-8")
+        css = ROOT_FRONTEND_CSS.read_text(encoding="utf-8")
+        self.assertIn('aria-label="Auto Trade Bot"', source)
+        self.assertIn(".binanceDemoDeck{display:grid", css)
+
     def test_manual_leverage_choices_are_bounded_and_default_ui_is_10x(self):
         for leverage in (1, 2, 3, 5, 10, 20, 30, 40, 50):
             body = DemoOrderRequest(symbol="BTCUSDT", direction="LONG", margin_usdt=5, leverage=leverage, stop_loss=99, tp1=101, tp2=102, tp3=103)

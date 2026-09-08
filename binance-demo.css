@@ -1,4 +1,4 @@
-.binanceDemoDeck{display:none;gap:14px;margin-top:12px;color:#173c29;animation:demoEnter .28s ease both}
+.binanceDemoDeck{display:grid;gap:14px;margin-top:12px;color:#173c29;animation:demoEnter .28s ease both}
 .appShell.view-v20-demo>.paperPilotRibbon,.appShell.view-v20-demo>.workspace,.appShell.view-v20-demo>.bottom{display:none!important}
 .appShell.view-v20-demo>.binanceDemoDeck{display:grid}
 @keyframes demoEnter{from{opacity:.25;transform:translateY(8px)}to{opacity:1;transform:none}}
