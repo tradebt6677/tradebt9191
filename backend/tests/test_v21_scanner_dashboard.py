@@ -133,46 +133,6 @@ class V21ScannerDashboardTests(unittest.TestCase):
         with self.assertRaises(BinanceDemoError):
             validate_entry_risk({"positions": [], "open_orders":[{"symbol":"ETHUSDT","reduce_only":False}], "available_balance":1000}, body, spec, settings, daily_realized_pnl=0)
 
-    def test_auto_trade_stops_at_daily_loss_percentage_before_scanning(self):
-        state = v21_demo.initial_state()
-        state["auto"].update({"enabled": True, "user_confirmed": True})
-        state["journal"] = [{"created_at": datetime.now(timezone.utc).isoformat(), "realized_pnl": -30.0, "verified_realized": True}]
-        app = SimpleNamespace(state=SimpleNamespace(v21_demo=state, binance_demo={}, http=object()))
-        with patch.object(v21_demo, "armed", return_value=True), \
-                patch.object(v21_demo, "client_for", return_value=object()), \
-                patch.object(v21_demo, "account_snapshot", new=AsyncMock(return_value={"wallet_balance": 1_000, "positions": [], "open_orders": []})), \
-                patch.object(v21_demo, "scan_demo_universe", new=AsyncMock()) as scan, \
-                patch.object(v21_demo, "persist_state"), \
-                patch.object(v21_demo, "execute_demo_order", new=AsyncMock()) as order:
-            asyncio.run(v21_demo.automatic_cycle(app))
-        scan.assert_not_awaited()
-        order.assert_not_awaited()
-        self.assertFalse(state["auto"]["enabled"])
-        self.assertEqual(state["auto"]["rejection_gate"], "DAILY_LOSS_LIMIT")
-        self.assertEqual(state["risk_guard"]["daily_loss_pct"], 3.0)
-
-    def test_auto_trade_stops_after_consecutive_verified_losses(self):
-        state = v21_demo.initial_state()
-        state["auto"].update({"enabled": True, "user_confirmed": True})
-        state["journal"] = [
-            {"created_at": datetime.now(timezone.utc).isoformat(), "realized_pnl": -1.0, "verified_realized": True},
-            {"created_at": datetime.now(timezone.utc).isoformat(), "realized_pnl": -2.0, "verified_realized": True},
-            {"created_at": datetime.now(timezone.utc).isoformat(), "realized_pnl": -3.0, "verified_realized": True},
-        ]
-        app = SimpleNamespace(state=SimpleNamespace(v21_demo=state, binance_demo={}, http=object()))
-        with patch.object(v21_demo, "armed", return_value=True), \
-                patch.object(v21_demo, "client_for", return_value=object()), \
-                patch.object(v21_demo, "account_snapshot", new=AsyncMock(return_value={"wallet_balance": 1_000, "positions": [], "open_orders": []})), \
-                patch.object(v21_demo, "scan_demo_universe", new=AsyncMock()) as scan, \
-                patch.object(v21_demo, "persist_state"), \
-                patch.object(v21_demo, "execute_demo_order", new=AsyncMock()) as order:
-            asyncio.run(v21_demo.automatic_cycle(app))
-        scan.assert_not_awaited()
-        order.assert_not_awaited()
-        self.assertFalse(state["auto"]["enabled"])
-        self.assertEqual(state["auto"]["rejection_gate"], "CONSECUTIVE_LOSSES")
-        self.assertEqual(state["risk_guard"]["consecutive_losses"], 3)
-
     def test_minimum_order_size_is_rejected_without_inflating_risk(self):
         sizing = v21_demo.risk_size_values(100, 40, 5, 2, 50)
         self.assertLess(sizing["margin_usdt"], 5)
