@@ -71,7 +71,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "max_loss_per_trade": 5.0,
     "max_margin_per_trade": 50.0,
     "daily_loss_limit": 30.0,
+    "daily_loss_limit_pct": 3.0,
     "daily_trade_limit": 6,
+    "consecutive_loss_limit": 3,
     "max_positions": 3,
     "min_confidence": 78,
     "min_score_threshold": 70,
@@ -98,7 +100,9 @@ class SettingsUpdate(BaseModel):
     max_loss_per_trade: float | None = Field(default=None, ge=0.5, le=25)
     max_margin_per_trade: float | None = Field(default=None, ge=5, le=100)
     daily_loss_limit: float | None = Field(default=None, ge=5, le=250)
+    daily_loss_limit_pct: float | None = Field(default=None, ge=0.5, le=20)
     daily_trade_limit: int | None = Field(default=None, ge=1, le=30)
+    consecutive_loss_limit: int | None = Field(default=None, ge=1, le=10)
     max_positions: int | None = Field(default=None, ge=1, le=3)
     min_confidence: int | None = Field(default=None, ge=60, le=95)
     min_score_threshold: int | None = Field(default=None, ge=40, le=90)
@@ -166,6 +170,7 @@ def initial_state() -> dict[str, Any]:
             "last_error": None,
         },
         "automation_trades": [],
+        "risk_guard": {"date": datetime.now(timezone.utc).date().isoformat(), "starting_balance": None, "daily_loss_pct": 0.0, "consecutive_losses": 0, "status": "READY", "last_notification": None},
         "paper_positions": [],
         "stream": {
             "status": "BEKLEMEDE", "transport": "REST EŞLEŞTİRME", "last_event": None,
@@ -198,6 +203,7 @@ def load_state() -> dict[str, Any]:
     for key in (
         "journal", "seen_event_ids", "backtest", "drills", "duplicate_blocks",
         "duplicate_submissions", "protection_repairs", "scanner", "automation_trades", "paper_positions",
+        "risk_guard",
     ):
         if key in saved:
             base[key] = saved[key]
@@ -506,6 +512,31 @@ def daily_metrics(state: dict[str, Any]) -> dict[str, Any]:
         "realized_pnl": round(realized, 4),
         "remaining_loss_budget": round(max(0.0, float(state["settings"]["daily_loss_limit"]) + realized), 4),
     }
+
+
+def update_risk_guard(state: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Derive daily percentage loss and trailing verified-loss streak from Demo evidence."""
+    guard = state.setdefault("risk_guard", {})
+    current_day = today()
+    if guard.get("date") != current_day:
+        guard.update({"date": current_day, "starting_balance": None, "daily_loss_pct": 0.0, "consecutive_losses": 0, "status": "READY", "last_notification": None})
+    balance = float(snapshot.get("wallet_balance") or 0)
+    if guard.get("starting_balance") is None and balance > 0:
+        guard["starting_balance"] = balance
+    starting_balance = float(guard.get("starting_balance") or 0)
+    realized = float(daily_metrics(state)["realized_pnl"])
+    guard["daily_loss_pct"] = round(max(0.0, -realized) / starting_balance * 100, 4) if starting_balance > 0 else 0.0
+    streak = 0
+    for item in state.get("journal", []):
+        if item.get("verified_realized") is not True:
+            continue
+        pnl = float(item.get("realized_pnl") or 0)
+        if pnl < 0:
+            streak += 1
+        elif pnl > 0:
+            break
+    guard["consecutive_losses"] = streak
+    return guard
 
 
 def risk_size_values(entry: float, stop: float, max_loss: float, leverage: int, max_margin: float) -> dict[str, float]:
@@ -845,12 +876,29 @@ async def automatic_cycle(application: Any) -> None:
     if daily["auto_entries"] >= settings["daily_trade_limit"]:
         _set_rejection(state, "DAILY_TRADE_LIMIT", "Günlük Demo işlem limiti doldu.")
         return
-    if daily["realized_pnl"] <= -float(settings["daily_loss_limit"]):
-        _set_rejection(state, "DAILY_LOSS_LIMIT", "Günlük Demo zarar limiti aktif; yeni giriş kilitli.")
-        auto["enabled"] = False
-        return
     client = client_for(application)
     snapshot = await account_snapshot(client)
+    guard = update_risk_guard(state, snapshot)
+    if daily["realized_pnl"] <= -float(settings["daily_loss_limit"]):
+        guard["status"] = "DAILY_LOSS_LIMIT"
+        _set_rejection(state, "DAILY_LOSS_LIMIT", "Günlük Demo zarar limiti aktif; yeni giriş kilitli.")
+        auto["enabled"] = False
+        persist_state(state)
+        return
+    if guard["daily_loss_pct"] >= float(settings["daily_loss_limit_pct"]):
+        guard["status"] = "DAILY_LOSS_LIMIT"
+        _set_rejection(state, "DAILY_LOSS_LIMIT", f"Günlük zarar %{guard['daily_loss_pct']:.2f} seviyesinde; yeni otomatik işlemler güvenlik amacıyla durduruldu.")
+        auto["enabled"] = False
+        record_event(state, "DAILY_LOSS_LIMIT", "Günlük zarar limiti aşıldı; yeni otomatik işlemler güvenlik amacıyla durduruldu.", source="RISK_ENGINE")
+        persist_state(state)
+        return
+    if guard["consecutive_losses"] >= int(settings["consecutive_loss_limit"]):
+        guard["status"] = "CONSECUTIVE_LOSSES"
+        _set_rejection(state, "CONSECUTIVE_LOSSES", f"Arka arkaya {guard['consecutive_losses']} başarısız işlem; otomatik işlemler geçici olarak durduruldu.")
+        auto["enabled"] = False
+        record_event(state, "CONSECUTIVE_LOSSES", f"Arka arkaya {guard['consecutive_losses']} başarısız işlem gerçekleşti; otomatik işlemler geçici olarak durduruldu.", source="RISK_ENGINE")
+        persist_state(state)
+        return
     max_positions = min(settings["max_positions"], MAX_OPEN_POSITIONS)
     pending_entries = sum(1 for item in snapshot.get("open_orders", []) if not bool(item.get("reduce_only", False)))
     pending_entries += len(state.get("paper_positions", []))
@@ -1245,6 +1293,7 @@ def summary_payload(state: dict[str, Any]) -> dict[str, Any]:
             "duplicate_blocks": state.get("duplicate_blocks", 0),
             "duplicate_submissions": state.get("duplicate_submissions", 0),
         },
+        "risk_guard": state.get("risk_guard", {}),
         "journal": state.get("journal", [])[:60], "backtest": state.get("backtest"),
         "automation_trades": state.get("automation_trades", [])[:100],
         "certificate": certificate_payload(state), "last_saved": state.get("last_saved"),

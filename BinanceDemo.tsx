@@ -165,7 +165,7 @@ type FormState = {
 
 type V21Settings = {
   allowed_symbols:string[];allow_long:boolean;allow_short:boolean;max_loss_per_trade:number;max_margin_per_trade:number
-  daily_loss_limit:number;daily_trade_limit:number;max_positions:number;min_confidence:number;max_volatility_pct:number
+  daily_loss_limit:number;daily_loss_limit_pct:number;daily_trade_limit:number;consecutive_loss_limit:number;max_positions:number;min_confidence:number;max_volatility_pct:number
   max_correlation_pct:number;schedule_start_hour:number;schedule_end_hour:number;scan_seconds:number
   breakeven_enabled:boolean;breakeven_trigger_r:number;trailing_enabled:boolean;trailing_trigger_r:number
   trailing_distance_r:number;notifications:boolean;fee_bps_per_side:number;slippage_bps_per_side:number
@@ -181,7 +181,7 @@ type V21Summary = {
   stream:{status:string;transport:string;last_event:string|null;last_sync:string|null;reconnect_count:number;error_count:number;last_error:string|null}
   daily:{date:string;auto_entries:number;events:number;realized_pnl:number;remaining_loss_budget:number}
   account:{wallet_balance:number|null;available_balance:number|null;unrealized_pnl:number|null;positions:number;reconciled_active_positions?:number;normal_orders:number;algo_orders:number}
-  protection:{repairs:number;duplicate_blocks:number};journal:V21Journal[];backtest:V21Backtest|null
+  protection:{repairs:number;duplicate_blocks:number};risk_guard:{date:string;starting_balance:number|null;daily_loss_pct:number;consecutive_losses:number;status:string;last_notification:string|null};journal:V21Journal[];backtest:V21Backtest|null
   certificate:{version:string;status:string;score:number;passed_gates:number;total_gates:number;gates:V21Gate[];reason:string;generated_at:string}
   last_saved:string|null;real_trading_locked:boolean
 }
@@ -310,6 +310,7 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
   const [symbolQuery,setSymbolQuery] = useState('')
   const [scannerFocus,setScannerFocus] = useState<{symbol:string;direction:'LONG'|'SHORT'|'WAIT';score:number;trend:string;volume:string;momentum:string;confidence:number;risk:string;status:string} | null>(null)
   const [alertFilter,setAlertFilter] = useState<'ALL'|'CRITICAL'|'WARNING'|'INFO'>('ALL')
+  const [unreadNotifications,setUnreadNotifications] = useState(0)
   const demoDeckRef = useRef<HTMLElement>(null)
   const workspaceRef = useRef<HTMLElement>(null)
   const accountRefreshId = useRef(0)
@@ -445,6 +446,7 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
     if (lastNotificationId.current === null) { lastNotificationId.current = newest.id;return }
     if (newest.id === lastNotificationId.current) return
     lastNotificationId.current = newest.id
+    setUnreadNotifications(count => count + 1)
     if (v21?.settings.notifications && 'Notification' in window && Notification.permission === 'granted') {
       new Notification(`ProTreBot · ${newest.kind}`, {body:newest.message,tag:newest.id})
     }
@@ -883,7 +885,7 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
       <button className={tab === 'dashboard' ? 'active' : ''} onClick={() => setTab('dashboard')}><LayoutDashboard/><span><b>DASHBOARD</b><small>Özet · Durum · Aktivite</small></span></button>
       <button className={tab === 'trade' ? 'active' : ''} onClick={() => setTab('trade')}><Crosshair/><span><b>İŞLEM MASASI</b><small>Emir · Grafik · Pozisyon</small></span></button>
       <button className={tab === 'risk' ? 'active' : ''} onClick={() => setTab('risk')}><Gauge/><span><b>RİSK KASASI</b><small>Limit · Boyut · Stop</small></span></button>
-      <button className={tab === 'journal' ? 'active' : ''} onClick={() => setTab('journal')}><ClipboardList/><span><b>CANLI GÜNLÜK</b><small>Dolum · Kapanış · Neden</small></span></button>
+      <button className={tab === 'journal' ? 'active' : ''} onClick={() => { setTab('journal'); setUnreadNotifications(0) }}><ClipboardList/><span><b>CANLI GÜNLÜK {unreadNotifications > 0 && <em>{unreadNotifications}</em>}</b><small>Dolum · Kapanış · Neden</small></span></button>
       <button className={tab === 'auto' ? 'active' : ''} onClick={() => setTab('auto')}><Zap/><span><b>OTOMASYON</b><small>İzin listesi · Kapılar</small></span></button>
       <button className={tab === 'backtest' ? 'active' : ''} onClick={() => setTab('backtest')}><BarChart3/><span><b>BACKTEST LAB</b><small>Ücret · Kayma · 3 dönem</small></span></button>
       <button className={tab === 'performance' ? 'active' : ''} onClick={() => setTab('performance')}><BarChart3/><span><b>PERFORMANS</b><small>PnL · Win rate · Drawdown</small></span></button><button className={tab === 'certificate' ? 'active' : ''} onClick={() => setTab('certificate')}><ShieldCheck/><span><b>SERTİFİKA</b><small>Sağlık · Tatbikat · Kanıt</small></span></button>
@@ -894,6 +896,7 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
       <section className="v21DashboardSubscription"><div><span>ABONELİĞİN</span><h3>Billing &amp; Subscription</h3><p>Plan ve yenileme bilgileri mevcut Billing ekranından yönetilir.</p></div><button type="button" onClick={() => window.dispatchEvent(new CustomEvent('protrebot-navigate',{detail:'billing'}))}>ABONELİĞİ YÖNET <span>→</span></button></section>
       <section className="v21DashboardStatus"><header><div><span>SİSTEM DURUMU</span><h3>Bot ve bağlantılar</h3></div><button type="button" onClick={() => void refreshV21()} aria-label="Sistem durumunu yenile"><RefreshCw/></button></header><div className="v21DashboardStatusGrid"><span><small>TRADING ENGINE</small><b>{v21?.auto.enabled ? 'AKTİF' : v21 ? 'KAPALI' : 'BEKLENİYOR'}</b></span><span><small>MARKET DATA</small><b>{v21?.stream.status === 'CANLI' ? 'BAĞLI' : v21 ? 'BEKLENİYOR' : '—'}</b></span><span><small>BINANCE TESTNET</small><b>{status?.connected ? 'BAĞLI' : status ? 'BEKLENİYOR' : '—'}</b></span><span><small>EVIDENCE LEDGER</small><b>{v21?.certificate ? 'AKTİF' : 'BEKLENİYOR'}</b></span></div><small className="v21DashboardSync">Son senkronizasyon: {stamp(v21?.stream.last_sync || v21?.last_saved)}</small></section>
       <section className="v21DashboardPerformance"><header><div><span>PERFORMANS</span><h3>Özet görünüm</h3></div><BarChart3/></header>{performance ? <div className="v21DashboardPerformanceBody"><strong className={performance.net_profit >= 0 ? 'positive' : 'negative'}>{performance.net_profit >= 0 ? '+' : ''}{fmt(performance.net_profit)} USDT</strong><span>{performance.total_trades} işlem · %{performance.win_rate} win rate</span><button type="button" onClick={() => setTab('performance')}>DETAYLI ANALİZ <span>→</span></button></div> : <div className="v21DashboardEmpty"><b>Henüz yeterli işlem verisi yok</b><span>Detaylı performans, tamamlanan Demo işlemleri oluştuktan sonra burada görünür.</span><button type="button" onClick={() => setTab('performance')}>PERFORMANSI İNCELE <span>→</span></button></div>}</section>
+        <section className="v21DashboardPerformance"><header><div><span>RİSK KORUMASI</span><h3>Auto Trade güvenlik durumu</h3></div><ShieldCheck/></header><div className="v21DashboardPerformanceBody"><strong className={v21?.risk_guard?.status === 'READY' ? 'positive' : 'negative'}>{v21?.risk_guard?.status === 'READY' ? 'HAZIR' : (v21?.risk_guard?.status || 'BEKLENİYOR')}</strong><span>Günlük zarar %{fmt(v21?.risk_guard?.daily_loss_pct)} · Arka arkaya kayıp {v21?.risk_guard?.consecutive_losses ?? 0}</span><button type="button" onClick={() => setTab('risk')}>RİSKİ İNCELE <span>→</span></button></div></section>
       <section className="v21DashboardActivity"><header><div><span>SON AKTİVİTELER</span><h3>Son önemli olaylar</h3></div><History/></header>{(v21?.journal?.length || status?.events?.length) ? <div>{[...(v21?.journal || []).map(item => ({title:item.kind,detail:item.message,time:item.created_at})),...(status?.events || []).map(item => ({title:item.kind,detail:item.message,time:item.created_at}))].slice(0,3).map((item,index) => <article key={`${item.time}-${index}`}><i/><div><b>{item.title}</b><span>{item.detail}</span></div><time>{stamp(item.time)}</time></article>)}</div> : <div className="v21DashboardEmpty"><b>Henüz aktivite bulunmuyor.</b><span>Yeni sistem ve Demo olayları burada görünecek.</span></div>}<button type="button" onClick={() => setTab('journal')}>TÜM AKTİVİTELER <span>→</span></button></section>
       <section className="v21DashboardActions" aria-label="Dashboard hızlı erişim"><button type="button" onClick={() => setTab('trade')}>İŞLEM MASASINI AÇ <span>→</span></button><button type="button" onClick={() => setTab('risk')}>RİSKİ İNCELE <span>→</span></button></section>
     </section>}
@@ -1049,6 +1052,8 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
           <label><span>İşlem başı maks. kayıp</span><input type="number" min=".5" max="25" value={settingsDraft.max_loss_per_trade} onChange={event => setSettingsDraft({...settingsDraft,max_loss_per_trade:Number(event.target.value)})}/><em>USDT</em></label>
           <label><span>İşlem başı maks. marjin</span><input type="number" min="5" max="100" value={settingsDraft.max_margin_per_trade} onChange={event => setSettingsDraft({...settingsDraft,max_margin_per_trade:Number(event.target.value)})}/><em>USDT</em></label>
           <label><span>Günlük zarar kilidi</span><input type="number" min="5" max="250" value={settingsDraft.daily_loss_limit} onChange={event => setSettingsDraft({...settingsDraft,daily_loss_limit:Number(event.target.value)})}/><em>USDT</em></label>
+          <label><span>Günlük zarar yüzdesi</span><input type="number" min="0.5" max="20" step="0.5" value={settingsDraft.daily_loss_limit_pct} onChange={event => setSettingsDraft({...settingsDraft,daily_loss_limit_pct:Number(event.target.value)})}/><em>%</em></label>
+          <label><span>Arka arkaya kayıp</span><input type="number" min="1" max="10" value={settingsDraft.consecutive_loss_limit} onChange={event => setSettingsDraft({...settingsDraft,consecutive_loss_limit:Number(event.target.value)})}/><em>işlem</em></label>
           <label><span>Günlük işlem limiti</span><input type="number" min="1" max="30" value={settingsDraft.daily_trade_limit} onChange={event => setSettingsDraft({...settingsDraft,daily_trade_limit:Number(event.target.value)})}/><em>adet</em></label>
           <label><span>Aynı anda pozisyon</span><select value={settingsDraft.max_positions} onChange={event => setSettingsDraft({...settingsDraft,max_positions:Number(event.target.value)})}><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
           <label><span>Minimum güven</span><input type="number" min="60" max="95" value={settingsDraft.min_confidence} onChange={event => setSettingsDraft({...settingsDraft,min_confidence:Number(event.target.value)})}/><em>%</em></label>
