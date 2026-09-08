@@ -153,7 +153,7 @@ class V22CommercialTests(unittest.TestCase):
         self.assertIn('await pool.execute("DELETE FROM protrebot_exchange_session_vault WHERE session_id = $1"', exchange_source)
         self.assertIn("await clear_session_vault_for_request(request)", V22_SOURCE)
         self.assertIn("protrebot.binance-demo.credentials.${id}", api_source)
-        self.assertIn("localStorage.removeItem(key)", api_source)
+        self.assertIn("No frontend secret persistence is used for demo credentials.", api_source)
         self.assertIn("loadDemoCredentials", demo_source)
         self.assertIn("clearDemoCredentials(sessionToken)", auth_source)
 

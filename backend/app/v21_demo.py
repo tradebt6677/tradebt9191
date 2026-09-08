@@ -281,7 +281,11 @@ def persist_state(state: dict[str, Any]) -> None:
 
 
 def state_for(request: Request) -> dict[str, Any]:
-    return request.app.state.v21_demo
+    state = getattr(request.app.state, "v21_demo", None)
+    if state is None:
+        state = initial_state()
+        request.app.state.v21_demo = state
+    return state
 
 
 def record_event(
@@ -373,7 +377,17 @@ def refresh_daily_risk_state(state: dict[str, Any], balance_reference: float) ->
     return {"loss_pct": loss_pct, "limit_pct": DAILY_LOSS_LIMIT_PCT, "last_warning_pct": risk.get("last_warning_pct", 0.0), "paused": state["auto"].get("status") == "PAUSED"}
 
 
-def client_for(application: Any) -> BinanceDemoClient:
+def client_for(request_or_application: Any) -> BinanceDemoClient:
+    application = getattr(request_or_application, "app", request_or_application)
+    has_member_session = getattr(request_or_application, "state", None) is not None and getattr(request_or_application.state, "member", None) is not None
+    try:
+        from .exchange_connections import session_credentials_for_request
+
+        api_key, secret_key = session_credentials_for_request(request_or_application, "TESTNET") if hasattr(request_or_application, "headers") else ("", "")
+        if has_member_session and (api_key and secret_key):
+            return BinanceDemoClient(application.state.http, api_key, secret_key)
+    except (ImportError, RuntimeError, ValueError):
+        pass
     api_key, secret_key = load_demo_credentials()
     return BinanceDemoClient(application.state.http, api_key, secret_key)
 
@@ -1581,7 +1595,7 @@ async def v21_risk_size(request: Request, body: RiskSizeRequest) -> dict[str, An
     state = state_for(request)
     symbol = normalize_symbol(body.symbol)
     values = risk_size_values(body.entry, body.stop, body.max_loss_usdt, body.leverage, float(state["settings"]["max_margin_per_trade"]))
-    rules = await symbol_rules(client_for(request.app), symbol)
+    rules = await symbol_rules(client_for(request), symbol)
     quantity = Decimal(str(values["notional_usdt"])) / Decimal(str(body.entry))
     return {**values, "symbol": symbol, "leverage": body.leverage, "quantity_preview": decimal_text(quantity), "step_size": decimal_text(rules["step"]), "demo_only": True}
 
@@ -1656,11 +1670,11 @@ async def v21_auto_start(request: Request, body: AutoStartRequest) -> dict[str, 
         _set_rejection(state, "DEMO_ARM", "Önce İşlem Masası'ndaki 10 dakikalık DEMO emir kilidini açın.")
         persist_state(state)
         raise HTTPException(423, "Önce İşlem Masası'ndaki 10 dakikalık DEMO emir kilidini açın.")
-    if not credentials_configured():
+    if not credentials_configured(request):
         _set_rejection(state, "DEMO_CREDENTIALS", "Binance Futures Demo anahtarları ayarlı değil.")
         persist_state(state)
         raise HTTPException(412, "Binance Futures Demo anahtarları ayarlı değil.")
-    snapshot = await account_snapshot(client_for(request.app))
+    snapshot = await account_snapshot(client_for(request))
     if snapshot.get("hedge_mode"):
         _set_rejection(state, "POSITION_MODE", "Demo hesabı One-way / Tek Yön modunda olmalı.")
         persist_state(state)

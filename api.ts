@@ -40,22 +40,15 @@ const demoCredentialsKey = (token=userSessionToken()) => {
 }
 
 export function loadDemoCredentials(): {apiKey:string;secretKey:string} {
-  const key = demoCredentialsKey()
-  if (!key) return {apiKey:'',secretKey:''}
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || '{}')
-    return {apiKey:typeof value.apiKey === 'string' ? value.apiKey : '',secretKey:typeof value.secretKey === 'string' ? value.secretKey : ''}
-  } catch { return {apiKey:'',secretKey:''} }
+  return {apiKey:'',secretKey:''}
 }
 
-export function saveDemoCredentials(apiKey:string, secretKey:string): void {
-  const key = demoCredentialsKey()
-  if (key) localStorage.setItem(key,JSON.stringify({apiKey,secretKey}))
+export function saveDemoCredentials(_apiKey:string, _secretKey:string): void {
+  // Credentials are intentionally kept in the authenticated server-side session vault.
 }
 
-export function clearDemoCredentials(token=userSessionToken()): void {
-  const key = demoCredentialsKey(token)
-  if (key) localStorage.removeItem(key)
+export function clearDemoCredentials(_token=userSessionToken()): void {
+  // No frontend secret persistence is used for demo credentials.
 }
 
 export function saveUserSessionToken(token: string, remember: boolean): void {

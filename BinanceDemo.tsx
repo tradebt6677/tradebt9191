@@ -331,6 +331,12 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
   const saveDemoConnection = async () => {
     const apiKey = demoCredentials.apiKey.trim(); const secretKey = demoCredentials.secretKey.trim()
     if (!apiKey || !secretKey) { setMessage('Demo API Key ve Secret Key gerekli.'); setMessageKind('error'); return }
+    if (status?.connections?.TESTNET?.active || status?.connections?.TESTNET?.configured) {
+      setMessage('Demo/Testnet credential zaten bu oturum için aktif ve kullanılabilir.'); setMessageKind('ok');
+      setDemoCredentials({apiKey:'',secretKey:''});
+      await refreshStatus();
+      return
+    }
     const payload = buildDemoSavePayload(apiKey, secretKey)
     const headers = new Headers({'Content-Type':'application/json'})
     const token = userSessionToken(); if (token) headers.set('Authorization', `Bearer ${token}`)
@@ -339,7 +345,8 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
       const response = await fetch(`${API_BASE}/exchange-connections/save`,{method:'POST',headers,body:JSON.stringify(payload)})
       const result = await response.json().catch(() => null) as {detail?:unknown}|null
       if (!response.ok) throw new Error(typeof result?.detail === 'string' ? result.detail : 'Demo credential kaydedilemedi.')
-      saveDemoCredentials(apiKey,secretKey); await refreshStatus(); setMessage('Demo API credential güvenli şekilde kaydedildi.'); setMessageKind('ok')
+      setDemoCredentials({apiKey:'',secretKey:''});
+      await refreshStatus(); setMessage('Demo API credential güvenli şekilde kaydedildi.'); setMessageKind('ok')
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Demo credential kaydedilemedi.'); setMessageKind('error') }
     finally { setBusy(false) }
   }
@@ -599,8 +606,15 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
       .finally(() => setV21Busy(false))
   }
   const toggleAuto = () => {
-    if (v21?.auto.enabled) runV21(() => v21Call<V21Summary>('/auto/stop',{method:'POST'}),'Yeni otomatik Demo girişleri durduruldu; mevcut korumalar açık.')
-    else runV21(() => v21Call<V21Summary>('/auto/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmation:autoConfirm})}),'Kontrollü V21 Demo otomasyonu başlatıldı.')
+    if (v21?.auto.enabled) {
+      runV21(() => v21Call<V21Summary>('/auto/stop',{method:'POST'}),'Yeni otomatik Demo girişleri durduruldu; mevcut korumalar açık.')
+      return
+    }
+    if (!status?.connections?.TESTNET?.active && !status?.connections?.TESTNET?.configured) {
+      setMessage('Demo API bağlantısı yok. Önce demo/testnet credential kaydedin ve doğrulayın.'); setMessageKind('error'); return
+    }
+    const confirmation = (autoConfirm || 'DEMO OTOMATİK').trim()
+    runV21(() => v21Call<V21Summary>('/auto/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmation})}),'Kontrollü V21 Demo otomasyonu başlatıldı.')
   }
   const runSmokeTest = () => runV21(
     () => v21Call('/smoke-test',{method:'POST'}),

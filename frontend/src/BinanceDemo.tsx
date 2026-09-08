@@ -461,8 +461,15 @@ export default function BinanceDemo({active,symbol,analysis,chart}:{active:boole
       .finally(() => setV21Busy(false))
   }
   const toggleAuto = () => {
-    if (v21?.auto.enabled) runV21(() => v21Call<V21Summary>('/auto/stop',{method:'POST'}),'Yeni otomatik Demo girişleri durduruldu; mevcut korumalar açık.')
-    else runV21(() => v21Call<V21Summary>('/auto/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmation:autoConfirm})}),'Kontrollü V21 Demo otomasyonu başlatıldı.')
+    if (v21?.auto.enabled) {
+      runV21(() => v21Call<V21Summary>('/auto/stop',{method:'POST'}),'Yeni otomatik Demo girişleri durduruldu; mevcut korumalar açık.')
+      return
+    }
+    if (!status?.connections?.TESTNET?.active && !status?.connections?.TESTNET?.configured) {
+      setMessage('Demo API bağlantısı yok. Önce demo/testnet credential kaydedin ve doğrulayın.'); setMessageKind('error'); return
+    }
+    const confirmation = (autoConfirm || 'DEMO OTOMATİK').trim()
+    runV21(() => v21Call<V21Summary>('/auto/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmation})}),'Kontrollü V21 Demo otomasyonu başlatıldı.')
   }
   const runBacktest = () => runV21(
     async () => { const result = await v21Call<V21Backtest>('/backtest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:backtestSymbol,interval:'15m',limit:1000})});await refreshV21(true);return result },

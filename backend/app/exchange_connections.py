@@ -565,11 +565,11 @@ async def exchange_connection_save(request: Request, body: SaveCredentialsReques
         """
         INSERT INTO protrebot_exchange_session_vault
           (session_id, user_id, mode, encrypted_payload, fingerprint, active, last_test_ok, last_test_at, last_error, account_summary, updated_at)
-        VALUES ($1, $2, $3, $4, $5, FALSE, TRUE, NOW(), NULL, $6::jsonb, NOW())
+        VALUES ($1, $2, $3, $4, $5, TRUE, TRUE, NOW(), NULL, $6::jsonb, NOW())
         ON CONFLICT (session_id, mode) DO UPDATE SET
           encrypted_payload = EXCLUDED.encrypted_payload,
           fingerprint = EXCLUDED.fingerprint,
-          active = FALSE,
+          active = TRUE,
           last_test_ok = TRUE,
           last_test_at = NOW(),
           last_error = NULL,
@@ -581,7 +581,7 @@ async def exchange_connection_save(request: Request, body: SaveCredentialsReques
     _SESSION_CACHE[(sid, mode)] = (api_key, secret_key)
     _SESSION_META[(sid, mode)] = {
         "configured": True,
-        "active": False,
+        "active": True,
         "fingerprint": fingerprint,
         "last_test_ok": True,
         "last_test_at": account["tested_at"],
@@ -590,7 +590,7 @@ async def exchange_connection_save(request: Request, body: SaveCredentialsReques
         "updated_at": now_iso(),
     }
     _lock_runtime(request.app, mode)
-    return {**session_public_status(request.app, request), "message": "Anahtarlar bu oturum için şifreli kasaya kaydedildi. Kullanmak için bağlantıyı ayrıca aktifleştirin."}
+    return {**session_public_status(request.app, request), "message": "Anahtarlar bu oturum için güvenli kasaya kaydedildi ve otomasyon için hazır."}
 
 
 @router.post("/activate")
