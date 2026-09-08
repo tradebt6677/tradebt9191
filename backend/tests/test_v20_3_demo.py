@@ -128,6 +128,12 @@ class V203BinanceDemoSafetyTests(unittest.TestCase):
         self.assertIn("nested.normalized_signal", PRODUCTION_FRONTEND_TEXT)
         self.assertIn('data-build-marker="BUILD_COMMIT"', PRODUCTION_FRONTEND_TEXT)
 
+    def test_manual_demo_order_preserves_request_scoped_testnet_credentials(self):
+        self.assertIn('execute_demo_order(request.app, body, source="MANUAL", request=request)', SOURCE_TEXT)
+        self.assertIn('request: Request | None = None', SOURCE_TEXT)
+        self.assertIn('client_for(request) if request is not None', SOURCE_TEXT)
+        self.assertIn('BinanceDemoClient(application.state.http, *load_demo_credentials())', SOURCE_TEXT)
+
     def test_analysis_fill_uses_only_directional_plans_and_refreshes_scanner_candidates(self):
         self.assertIn("isCompleteAnalysisPlan(plan)", PRODUCTION_FRONTEND_TEXT)
         self.assertIn("/scanner/candidates", PRODUCTION_FRONTEND_TEXT)

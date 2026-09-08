@@ -1352,18 +1352,17 @@ async def demo_order_test(request: Request, body: DemoOrderRequest) -> dict[str,
 
 @router.post("/order")
 async def demo_order(request: Request, body: DemoOrderRequest) -> dict[str, Any]:
-    return await execute_demo_order(request.app, body, source="MANUAL")
+    return await execute_demo_order(request.app, body, source="MANUAL", request=request)
 
 
-async def execute_demo_order(application: Any, body: DemoOrderRequest, *, source: str = "MANUAL") -> dict[str, Any]:
+async def execute_demo_order(application: Any, body: DemoOrderRequest, *, source: str = "MANUAL", request: Request | None = None) -> dict[str, Any]:
     """Submit one hard-capped Demo order for the manual or V21 automation path."""
     state = application.state.binance_demo
     if not armed(state):
         raise HTTPException(423, "Demo emir kilidi kapalı veya süresi doldu; önce 10 dakikalık kilidi açın.")
     async with state["lock"]:
         try:
-            api_key, secret_key = load_demo_credentials()
-            client = BinanceDemoClient(application.state.http, api_key, secret_key)
+            client = client_for(request) if request is not None else BinanceDemoClient(application.state.http, *load_demo_credentials())
             await ensure_one_way_position_mode(client)
             snapshot = await account_snapshot(client)
             symbol = normalize_symbol(body.symbol)
