@@ -22,6 +22,7 @@ type Analysis = {
 type Health = {status:string;version:string;mode:string;testnet:string;live_guard:string;paper:string;database:string;cloud_evidence:string;web_access:string}
 type ConnectionStatus = {connections?:Record<'TESTNET'|'LIVE',{configured:boolean;active:boolean;last_test_ok:boolean;last_error?:string|null;storage?:string;account?:{active_positions?:number}|null}>;vault?:{ready:boolean;reason?:string|null}}
 type NotificationItem = {id:string;title:string;description:string;kind:'success'|'warning'|'error'|'info'}
+const ANALYSIS_TIMEOUT_MS = 30000
 
 const notificationKind = (value:string):NotificationItem['kind'] => {
   if (/error|hata|failed|down|unavailable/i.test(value)) return 'error'
@@ -69,6 +70,7 @@ function TestnetMarketChart({symbol,interval,onAnalysis,onAnalysisProgress,showL
   useEffect(() => {
     if (!host.current) return
     let active = true
+    let activeController:AbortController|null = null
     let priceLines:IPriceLine[] = []
     const chart = createChart(host.current,{
       autoSize:true,
@@ -100,11 +102,15 @@ function TestnetMarketChart({symbol,interval,onAnalysis,onAnalysisProgress,showL
     }
 
     const load = async () => {
+      activeController?.abort()
+      const controller = new AbortController()
+      activeController = controller
+      const timeout = window.setTimeout(() => controller.abort(),ANALYSIS_TIMEOUT_MS)
       onAnalysisProgress?.(5)
       try {
         const [candleResponse,analysisResponse] = await Promise.all([
-          fetch(`${API_BASE}/klines/${symbol}?interval=${interval}&limit=500`),
-          fetch(`${API_BASE}/analysis/${symbol}?interval=${interval}`),
+          fetch(`${API_BASE}/klines/${symbol}?interval=${interval}&limit=500`,{signal:controller.signal}),
+          fetch(`${API_BASE}/analysis/${symbol}?interval=${interval}`,{signal:controller.signal}),
         ])
         if (!candleResponse.ok || !analysisResponse.ok) throw new Error('Piyasa verisi alınamadı')
         const rows = await candleResponse.json() as Candle[]
@@ -120,12 +126,15 @@ function TestnetMarketChart({symbol,interval,onAnalysis,onAnalysisProgress,showL
         setStream('CANLI')
         setUpdated(new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}))
       } catch {
-        if (active) {setStream('HATA');onAnalysis(null);onAnalysisProgress?.(-1)}
+        if (active && activeController === controller) {setStream('HATA');onAnalysis(null);onAnalysisProgress?.(-1)}
+      } finally {
+        window.clearTimeout(timeout)
+        if (activeController === controller) activeController = null
       }
     }
     void load()
     const timer = window.setInterval(() => void load(),15000)
-    return () => {active=false;window.clearInterval(timer);chart.remove();onAnalysis(null)}
+    return () => {active=false;activeController?.abort();window.clearInterval(timer);chart.remove();onAnalysis(null)}
   },[symbol,interval,onAnalysis,showLevels,showEma])
 
   return <div className="v26ChartShell">
