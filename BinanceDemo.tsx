@@ -331,7 +331,7 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
   const saveDemoConnection = async () => {
     const apiKey = demoCredentials.apiKey.trim(); const secretKey = demoCredentials.secretKey.trim()
     if (!apiKey || !secretKey) { setMessage('Demo API Key ve Secret Key gerekli.'); setMessageKind('error'); return }
-    if (status?.connections?.TESTNET?.active || status?.connections?.TESTNET?.configured) {
+    if (status?.configured || status?.connected) {
       setMessage('Demo/Testnet credential zaten bu oturum için aktif ve kullanılabilir.'); setMessageKind('ok');
       await refreshStatus();
       return
@@ -608,7 +608,7 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
       runV21(() => v21Call<V21Summary>('/auto/stop',{method:'POST'}),'Yeni otomatik Demo girişleri durduruldu; mevcut korumalar açık.')
       return
     }
-    if (!status?.connections?.TESTNET?.active && !status?.connections?.TESTNET?.configured) {
+    if (!status?.configured && !status?.connected) {
       setMessage('Demo API bağlantısı yok. Önce demo/testnet credential kaydedin ve doğrulayın.'); setMessageKind('error'); return
     }
     const confirmation = (autoConfirm || 'DEMO OTOMATİK').trim()
