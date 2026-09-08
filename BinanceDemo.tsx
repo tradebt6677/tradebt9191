@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, BarChart3, Bell, Calculator, CheckCircle2, ChevronDown, CircleDollarSign, ClipboardList, Crosshair, Gauge, History, LayoutDashboard, LockKeyhole, Play, Radar, Radio, RefreshCw, Save, Search, Send, Settings2, ShieldCheck, Sparkles, Target, TestTube2, TriangleAlert, UnlockKeyhole, Wallet, X, Zap } from 'lucide-react'
-import { API_BASE, loadDemoCredentials, saveDemoCredentials } from './api'
+import { API_BASE, buildDemoSavePayload, loadDemoCredentials, saveDemoCredentials, userSessionToken } from './api'
 
 const API = `${API_BASE}/binance-demo`
 const V21_API = `${API_BASE}/v21`
@@ -331,11 +331,14 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
   const saveDemoConnection = async () => {
     const apiKey = demoCredentials.apiKey.trim(); const secretKey = demoCredentials.secretKey.trim()
     if (!apiKey || !secretKey) { setMessage('Demo API Key ve Secret Key gerekli.'); setMessageKind('error'); return }
+    const payload = buildDemoSavePayload(apiKey, secretKey)
+    const headers = new Headers({'Content-Type':'application/json'})
+    const token = userSessionToken(); if (token) headers.set('Authorization', `Bearer ${token}`)
     setBusy(true); setMessageKind('info'); setMessage('Demo credential kaydediliyor…')
     try {
-      const response = await fetch(`${API_BASE}/exchange-connections/save`,{method:'POST',body:JSON.stringify({mode:'TESTNET',api_key:apiKey,secret_key:secretKey,confirmation:'TESTNET KASAYA KAYDET'})})
-      const payload = await response.json().catch(() => null) as {detail?:unknown}|null
-      if (!response.ok) throw new Error(typeof payload?.detail === 'string' ? payload.detail : 'Demo credential kaydedilemedi.')
+      const response = await fetch(`${API_BASE}/exchange-connections/save`,{method:'POST',headers,body:JSON.stringify(payload)})
+      const result = await response.json().catch(() => null) as {detail?:unknown}|null
+      if (!response.ok) throw new Error(typeof result?.detail === 'string' ? result.detail : 'Demo credential kaydedilemedi.')
       saveDemoCredentials(apiKey,secretKey); await refreshStatus(); setMessage('Demo API credential güvenli şekilde kaydedildi.'); setMessageKind('ok')
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Demo credential kaydedilemedi.'); setMessageKind('error') }
     finally { setBusy(false) }
@@ -344,15 +347,18 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
   const testDemoConnection = async () => {
     const apiKey = demoCredentials.apiKey.trim(); const secretKey = demoCredentials.secretKey.trim()
     if (!apiKey || !secretKey) { setMessage('Önce Demo API Key ve Secret Key girin.'); setMessageKind('error'); return }
+    const payload = buildDemoSavePayload(apiKey, secretKey)
+    const headers = new Headers({'Content-Type':'application/json'})
+    const token = userSessionToken(); if (token) headers.set('Authorization', `Bearer ${token}`)
     setBusy(true); setMessageKind('info'); setMessage('Demo bağlantısı doğrulanıyor…')
     try {
-      const testResponse = await fetch(`${API_BASE}/exchange-connections/test`,{method:'POST',body:JSON.stringify({mode:'TESTNET',api_key:apiKey,secret_key:secretKey})})
+      const testResponse = await fetch(`${API_BASE}/exchange-connections/test`,{method:'POST',headers,body:JSON.stringify({mode:'TESTNET',api_key:apiKey,secret_key:secretKey})})
       const testPayload = await testResponse.json().catch(() => null) as {detail?:unknown}|null
       if (!testResponse.ok) throw new Error(typeof testPayload?.detail === 'string' ? testPayload.detail : 'Demo bağlantısı doğrulanamadı.')
-      const saveResponse = await fetch(`${API_BASE}/exchange-connections/save`,{method:'POST',body:JSON.stringify({mode:'TESTNET',api_key:apiKey,secret_key:secretKey,confirmation:'TESTNET KASAYA KAYDET'})})
+      const saveResponse = await fetch(`${API_BASE}/exchange-connections/save`,{method:'POST',headers,body:JSON.stringify(payload)})
       if (!saveResponse.ok) throw new Error('Demo credential kaydedilemedi.')
       saveDemoCredentials(apiKey,secretKey)
-      const activateResponse = await fetch(`${API_BASE}/exchange-connections/activate`,{method:'POST',body:JSON.stringify({mode:'TESTNET',confirmation:'TESTNET BAĞLANTIYI AÇ'})})
+      const activateResponse = await fetch(`${API_BASE}/exchange-connections/activate`,{method:'POST',headers,body:JSON.stringify({mode:'TESTNET',confirmation:'TESTNET BAĞLANTIYI AÇ'})})
       if (!activateResponse.ok) throw new Error('Demo bağlantısı aktifleştirilemedi.')
       await apiCall('/connect',{method:'POST'}); await refreshStatus()
       setMessage('DEMO BAĞLI · Binance Demo/Testnet bağlantısı doğrulandı.'); setMessageKind('ok')

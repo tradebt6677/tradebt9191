@@ -69,6 +69,18 @@ export function clearUserSessionToken(): void {
   sessionStorage.removeItem(USER_SESSION_KEY)
 }
 
+export const DEMO_CONNECTION_MODE = 'TESTNET' as const
+export const DEMO_SAVE_CONFIRMATION = 'TESTNET KASAYA KAYDET' as const
+
+export function buildDemoSavePayload(apiKey: string, secretKey: string): { mode: typeof DEMO_CONNECTION_MODE; api_key: string; secret_key: string; confirmation: typeof DEMO_SAVE_CONFIRMATION } {
+  return {
+    mode: DEMO_CONNECTION_MODE,
+    api_key: apiKey.trim(),
+    secret_key: secretKey.trim(),
+    confirmation: DEMO_SAVE_CONFIRMATION,
+  }
+}
+
 function apiRequestPath(input: RequestInfo | URL): string | null {
   try {
     const target = new URL(input instanceof Request ? input.url : String(input), window.location.href)

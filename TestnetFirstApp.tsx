@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { CandlestickSeries, ColorType, createChart, HistogramSeries, LineSeries, type IPriceLine } from 'lightweight-charts'
 import { Activity, ArrowUp, Bell, CheckCircle2, CircleDollarSign, Cloud, CloudCog, KeyRound, LockKeyhole, Menu, RadioTower, RefreshCw, Save, ShieldCheck, Sparkles, TestTube2, X } from 'lucide-react'
-import { API_BASE, userSessionToken } from './api'
+import { API_BASE, buildDemoSavePayload, userSessionToken } from './api'
 import CoinAnalysisCenter from './CoinAnalysisCenter'
 
 const BinanceDemo = lazy(() => import('./BinanceDemo'))
@@ -196,7 +196,7 @@ export default function TestnetFirstApp() {
       const headers = new Headers({'Content-Type':'application/json'}); const token = userSessionToken(); if (token) headers.set('Authorization',`Bearer ${token}`)
       const saveResponse = await fetch(`${API_BASE}/exchange-connections/save`,{
         method:'POST',headers,
-        body:JSON.stringify({mode:'TESTNET',api_key:apiKey,secret_key:secretKey,confirmation:'TESTNET KASAYA KAYDET'}),
+        body:JSON.stringify(buildDemoSavePayload(apiKey, secretKey)),
       })
       const savePayload = await saveResponse.json().catch(() => null) as {detail?:unknown}|null
       if (!saveResponse.ok) throw new Error(typeof savePayload?.detail === 'string' ? savePayload.detail : 'Demo credentials securely save edilemedi.')

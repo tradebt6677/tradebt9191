@@ -15,6 +15,9 @@ ROOT = Path(__file__).parents[2]
 BACKEND = ROOT / "backend"
 sys.path.insert(0, str(BACKEND))
 
+from fastapi import HTTPException  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
+
 from app.commercial_core import (  # noqa: E402
     FeeGuardInput,
     calculate_fee_guard,
@@ -25,6 +28,7 @@ from app.commercial_core import (  # noqa: E402
     verify_password,
     verify_token,
 )
+from app.exchange_connections import SaveCredentialsRequest  # noqa: E402
 from app.v22_commercial import BootstrapRequest, gmail_failure_log, send_auth_email, sync_v22_storage, v22_admin_link_trading_account, v22_admin_trading_accounts, v22_admin_unlink_trading_account, v22_bootstrap, v22_verification_status  # noqa: E402
 from app.main import health_check_redis, health_item, healthz, run_health_checks  # noqa: E402
 
@@ -152,6 +156,35 @@ class V22CommercialTests(unittest.TestCase):
         self.assertIn("localStorage.removeItem(key)", api_source)
         self.assertIn("loadDemoCredentials", demo_source)
         self.assertIn("clearDemoCredentials(sessionToken)", auth_source)
+
+    def test_exchange_save_contract_accepts_testnet_and_rejects_demo_or_wrong_confirmation(self):
+        valid = SaveCredentialsRequest(mode="TESTNET", api_key="abcdefghijklmnopqrstuvwxyz", secret_key="1234567890abcdef", confirmation="TESTNET KASAYA KAYDET")
+        self.assertEqual(valid.mode, "TESTNET")
+        self.assertEqual(valid.confirmation, "TESTNET KASAYA KAYDET")
+        with self.assertRaises(ValidationError):
+            SaveCredentialsRequest(mode="DEMO", api_key="abcdefghijklmnopqrstuvwxyz", secret_key="1234567890abcdef", confirmation="TESTNET KASAYA KAYDET")
+
+        class Pool:
+            async def execute(self, *args, **kwargs):
+                return None
+
+            async def fetch(self, *args, **kwargs):
+                return []
+
+        secret = b"exchange-save-contract-secret-long-enough"
+        owner = {"id": "owner-save-contract", "role": "OWNER", "active": True, "email_verified": True, "auth_version": 1}
+        token = issue_token(owner["id"], owner["role"], secret, now=int(time.time()), ttl_seconds=3_600)
+        pool = Pool()
+        application = SimpleNamespace(state=SimpleNamespace(db_pool=pool, http=AsyncMock(), exchange_vault={"ready": True, "storage": "POSTGRESQL + FERNET", "reason": None, "loaded_at": "now", "pool_id": id(pool)}))
+        request = SimpleNamespace(app=application, headers={"authorization": f"Bearer {token}"}, state=SimpleNamespace(member=owner))
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(
+                __import__('app.exchange_connections', fromlist=['exchange_connection_save']).exchange_connection_save(
+                    request,
+                    SaveCredentialsRequest(mode="TESTNET", api_key="abcdefghijklmnopqrstuvwxyz", secret_key="1234567890abcdef", confirmation="YANLIŞ ONAY"),
+                )
+            )
+        self.assertEqual(ctx.exception.status_code, 422)
 
     def test_trading_account_endpoint_enforces_owner_and_returns_empty_without_accounts(self):
         from fastapi import HTTPException
