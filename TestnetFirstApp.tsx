@@ -61,7 +61,7 @@ const gateInteraction = (target:View,eventName?:string) => ({
   },
 })
 
-function TestnetMarketChart({symbol,interval,onAnalysis,showLevels=true,showEma=true}:{symbol:string;interval:string;onAnalysis:(analysis:Analysis|null)=>void;showLevels?:boolean;showEma?:boolean}) {
+function TestnetMarketChart({symbol,interval,onAnalysis,onAnalysisProgress,showLevels=true,showEma=true}:{symbol:string;interval:string;onAnalysis:(analysis:Analysis|null)=>void;onAnalysisProgress?:(progress:number)=>void;showLevels?:boolean;showEma?:boolean}) {
   const host = useRef<HTMLDivElement>(null)
   const [stream,setStream] = useState<'YÜKLENİYOR'|'CANLI'|'HATA'>('YÜKLENİYOR')
   const [updated,setUpdated] = useState('—')
@@ -100,6 +100,7 @@ function TestnetMarketChart({symbol,interval,onAnalysis,showLevels=true,showEma=
     }
 
     const load = async () => {
+      onAnalysisProgress?.(5)
       try {
         const [candleResponse,analysisResponse] = await Promise.all([
           fetch(`${API_BASE}/klines/${symbol}?interval=${interval}&limit=500`),
@@ -107,16 +108,19 @@ function TestnetMarketChart({symbol,interval,onAnalysis,showLevels=true,showEma=
         ])
         if (!candleResponse.ok || !analysisResponse.ok) throw new Error('Piyasa verisi alınamadı')
         const rows = await candleResponse.json() as Candle[]
+        onAnalysisProgress?.(45)
         const analysis = await analysisResponse.json() as Analysis
         if (!active) return
         candles.setData(rows.map(row => ({time:row.time as never,open:row.open,high:row.high,low:row.low,close:row.close})))
         volume.setData(rows.map(row => ({time:row.time as never,value:row.volume,color:row.close >= row.open ? 'rgba(24,177,100,.32)' : 'rgba(239,89,74,.28)'})))
+        onAnalysisProgress?.(85)
         applyAnalysis(analysis)
+        onAnalysisProgress?.(100)
         chart.timeScale().fitContent()
         setStream('CANLI')
         setUpdated(new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}))
       } catch {
-        if (active) {setStream('HATA');onAnalysis(null)}
+        if (active) {setStream('HATA');onAnalysis(null);onAnalysisProgress?.(-1)}
       }
     }
     void load()
@@ -137,6 +141,7 @@ export default function TestnetFirstApp() {
   const [symbol,setSymbol] = useState('BTCUSDT')
   const [interval,setInterval] = useState('15m')
   const [analysis,setAnalysis] = useState<Analysis|null>(null)
+  const [analysisProgress,setAnalysisProgress] = useState(0)
   const [health,setHealth] = useState<Health|null>(null)
   const [loading,setLoading] = useState(false)
   const [credentials,setCredentials] = useState({demoApiKey:'',demoSecretKey:'',liveApiKey:'',liveSecretKey:''})
@@ -304,12 +309,12 @@ export default function TestnetFirstApp() {
 
     {view === 'testnet' && <>
       <section className="v26MarketBar">
-        <div className="v26MarketTitle"><Activity/><span><small>SEÇİLİ TESTNET PAZARI</small><b>{symbol.replace('USDT','/USDT')}</b></span><strong className={analysis?.direction === 'SHORT' ? 'short' : analysis?.direction === 'LONG' ? 'long' : ''}>{analysis?.direction || 'HESAPLANIYOR'} <em>%{analysis?.confidence ?? 0}</em></strong></div>
+        <div className="v26MarketTitle"><Activity/><span><small>SEÇİLİ TESTNET PAZARI</small><b>{symbol.replace('USDT','/USDT')}</b></span><strong className={analysis?.direction === 'SHORT' ? 'short' : analysis?.direction === 'LONG' ? 'long' : ''}>{analysis?.direction || (analysisProgress < 0 ? 'ANALİZ HATASI' : 'HESAPLANIYOR')} <em>{analysis ? `%${analysis.confidence}` : analysisProgress < 0 ? 'TEKRAR DENEYİN' : analysisProgress > 0 ? `%${analysisProgress}` : 'BAŞLATILIYOR'}</em></strong></div>
         <div className="v26MarketPicker">{markets.slice(0,6).map(market => <button key={market.symbol} className={market.symbol === symbol ? 'active' : ''} onClick={() => setSymbol(market.symbol)}><b>{market.display}</b><span>{format(market.price)}</span><em className={market.change >= 0 ? 'up' : 'down'}>{market.change >= 0 ? '+' : ''}{market.change.toFixed(2)}%</em></button>)}</div>
         <div className="v26Intervals">{['1m','5m','15m','1h','4h'].map(item => <button key={item} className={interval === item ? 'active' : ''} onClick={() => setInterval(item)}>{item}</button>)}</div>
       </section>
       <Suspense fallback={<div className="v26Loading"><RefreshCw className="spin"/>Testnet merkezi hazırlanıyor…</div>}>
-        <BinanceDemo active symbol={symbol} markets={markets} onSymbolChange={setSymbol} analysis={analysis} chart={<TestnetMarketChart symbol={symbol} interval={interval} onAnalysis={setAnalysis}/>}/>
+        <BinanceDemo active symbol={symbol} markets={markets} onSymbolChange={setSymbol} analysis={analysis} chart={<TestnetMarketChart symbol={symbol} interval={interval} onAnalysis={setAnalysis} onAnalysisProgress={setAnalysisProgress}/>}/>
       </Suspense>
       <CoinAnalysisCenter interval={interval} onIntervalChange={setInterval} chart={(selectedSymbol,selectedInterval,showLevels,showEma) => <TestnetMarketChart symbol={selectedSymbol} interval={selectedInterval} showLevels={showLevels} showEma={showEma} onAnalysis={() => undefined}/>}/>
     </>}

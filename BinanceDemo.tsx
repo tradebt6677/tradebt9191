@@ -478,12 +478,27 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
         if (!response.ok) throw new Error(apiErrorMessage(payload && typeof payload === 'object' && 'detail' in payload ? payload.detail : payload))
         plan = normalizeAnalysisPlan(payload,symbol)
       }
-      if (!isCompleteAnalysisPlan(plan) && v21?.scanner) {
-        const candidates = [...(v21.scanner.top_candidates || []),...(v21.scanner.all_candidates || [])]
+      if (!isCompleteAnalysisPlan(plan)) {
+        let candidates = v21?.scanner
+          ? [...(v21.scanner.top_candidates || []),...(v21.scanner.all_candidates || [])]
+          : []
+        if (!candidates.some(item => item.symbol.toUpperCase() === symbol.toUpperCase())) {
+          try {
+            const scannerPayload = await v21Call<{top_candidates?:V21Summary['scanner']['top_candidates'];candidates?:V21Summary['scanner']['top_candidates']}>('/scanner/candidates')
+            candidates = [...(scannerPayload.top_candidates || []),...(scannerPayload.candidates || [])]
+          } catch {
+            // The direct analysis remains authoritative when the scanner is unavailable.
+          }
+        }
         const candidate = candidates.find(item => item.symbol.toUpperCase() === symbol.toUpperCase() && ['LONG','SHORT'].includes(item.direction.toUpperCase()) && [item.entry,item.stop_loss,item.tp1,item.tp2,item.tp3].every(value => Number.isFinite(value) && value > 0))
         if (candidate) plan = normalizeAnalysisPlan(candidate,symbol)
       }
-      if (!isCompleteAnalysisPlan(plan)) throw new Error('Güvenli işlem yönü oluşmadı. Güncel analiz tekrar kontrol edilebilir.')
+      if (!isCompleteAnalysisPlan(plan)) {
+        const waiting = plan?.direction === 'BEKLE'
+        throw new Error(waiting
+          ? 'Güncel analiz BEKLE durumunda; LONG/SHORT yönü kesinleşmeden form doldurulmadı.'
+          : 'Güncel analizde güvenli LONG/SHORT planı veya geçerli V21 adayı bulunamadı.')
+      }
       const levels = [plan.entry,plan.stop_loss,plan.tp1,plan.tp2,plan.tp3]
       if (levels.some(value => !Number.isFinite(value) || value <= 0)) throw new Error('Analiz planında geçerli giriş, Stop ve TP seviyeleri bulunamadı.')
       const ordered = plan.direction === 'LONG'

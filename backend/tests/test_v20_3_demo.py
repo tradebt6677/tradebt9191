@@ -128,6 +128,21 @@ class V203BinanceDemoSafetyTests(unittest.TestCase):
         self.assertIn("nested.normalized_signal", PRODUCTION_FRONTEND_TEXT)
         self.assertIn('data-build-marker="BUILD_COMMIT"', PRODUCTION_FRONTEND_TEXT)
 
+    def test_analysis_fill_uses_only_directional_plans_and_refreshes_scanner_candidates(self):
+        self.assertIn("isCompleteAnalysisPlan(plan)", PRODUCTION_FRONTEND_TEXT)
+        self.assertIn("/scanner/candidates", PRODUCTION_FRONTEND_TEXT)
+        self.assertIn("Güncel analiz BEKLE durumunda", PRODUCTION_FRONTEND_TEXT)
+        self.assertIn("Güncel analizde güvenli LONG/SHORT planı veya geçerli V21 adayı bulunamadı.", PRODUCTION_FRONTEND_TEXT)
+        self.assertNotIn("direction: 'SHORT'", PRODUCTION_FRONTEND_TEXT)
+
+    def test_analysis_progress_tracks_real_fetch_stages_and_errors(self):
+        testnet_source = (ROOT / "TestnetFirstApp.tsx").read_text(encoding="utf-8")
+        for progress in (5, 45, 85, 100, -1):
+            self.assertIn(f"onAnalysisProgress?.({progress})", testnet_source)
+        self.assertIn("analysisProgress > 0", testnet_source)
+        self.assertIn("ANALİZ HATASI", testnet_source)
+        self.assertIn("onAnalysisProgress={setAnalysisProgress}", testnet_source)
+
     def test_root_vercel_build_chain_is_explicit_and_deterministic(self):
         package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
         vercel = json.loads((ROOT / "vercel.json").read_text(encoding="utf-8"))
