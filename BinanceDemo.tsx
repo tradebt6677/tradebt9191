@@ -935,7 +935,7 @@ export default function BinanceDemo({active,symbol,analysis,chart,markets,onSymb
   const overallHealth = healthScore === null ? 'UNKNOWN' : healthScore >= 90 ? 'OPERATIONAL' : healthScore >= 60 ? 'DEGRADED' : 'LIMITED'
   const systemEvents = [...(status?.events || []).map(event => ({kind:'INFO',title:event.kind,detail:event.message,time:event.created_at})),...(v21?.journal || []).slice(0,5).map(item => ({kind:'INFO',title:item.kind,detail:item.message,time:item.created_at}))]
   const previewLeverage = resolveLeverage(form.leverage,form.customLeverage)
-  const filteredMarkets = markets.filter(market => `${market.display} ${market.symbol}`.toUpperCase().includes(symbolQuery.trim().toUpperCase())).slice(0,20)
+  const filteredMarkets = markets.filter(market => `${market.display} ${market.symbol}`.toUpperCase().includes(symbolQuery.trim().toUpperCase()))
   const previewEntry = form.orderType === 'LIMIT' ? numberValue(form.limitPrice) : Number(analysis?.entry || 0)
   const previewStop = numberValue(form.stop) || Number(analysis?.stop_loss || 0)
   const previewTp1 = numberValue(form.tp1) || Number(analysis?.tp1 || 0)
