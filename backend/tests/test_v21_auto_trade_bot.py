@@ -30,6 +30,18 @@ class AutoTradeBotTests(unittest.TestCase):
         self.assertNotIn("BADUSDT", result)
         self.assertNotIn("BADUSD", result)
 
+    def test_default_universe_ignores_legacy_fixed_24_coin_allowlist(self):
+        symbols = []
+        tickers = []
+        for index in range(30):
+            symbol = f"COIN{index}USDT"
+            symbols.append({"symbol": symbol, "baseAsset": f"COIN{index}", "status": "TRADING", "contractType": "PERPETUAL", "quoteAsset": "USDT"})
+            tickers.append({"symbol": symbol, "quoteVolume": str(1_000_000 + index), "lastPrice": "100", "priceChangePercent": "1"})
+        result = v21_demo.dynamic_auto_universe({"symbols": symbols}, tickers, v21_demo.DEFAULT_SETTINGS)
+        self.assertEqual(len(result), 30)
+        self.assertEqual(result[0], "COIN29USDT")
+        self.assertTrue(all(symbol in result for symbol in ("COIN0USDT", "COIN1USDT", "COIN29USDT")))
+
     def test_daily_loss_thresholds_and_deduplication(self):
         state = v21_demo.initial_state()
         state["risk"]["daily_base_balance"] = 1000.0

@@ -428,12 +428,19 @@ async def demo_candles(client: BinanceDemoClient, symbol: str, interval: str, li
     return normalize_candles(rows)
 
 
+def _effective_allowed_symbols(settings: dict[str, Any]) -> set[str] | None:
+    configured = settings.get("_auto_universe") or settings.get("allowed_symbols") or []
+    normalized = {normalize_symbol(value) for value in configured if value}
+    if not normalized or normalized == AUTO_TRADE_SYMBOL_SET:
+        return None
+    return normalized
+
+
 def dynamic_auto_universe(exchange_info: Any, tickers: Any, settings: dict[str, Any]) -> list[str]:
     ticker_by_symbol = {
         str(item.get("symbol")): item for item in response_rows(tickers) if item.get("symbol")
     }
-    configured = {normalize_symbol(value) for value in settings.get("allowed_symbols", AUTO_TRADE_SYMBOLS)}
-    use_dynamic_default = configured == AUTO_TRADE_SYMBOL_SET
+    configured = _effective_allowed_symbols(settings)
     eligible: list[tuple[str, float]] = []
     rows = exchange_info.get("symbols", []) if isinstance(exchange_info, dict) else []
     for item in rows if isinstance(rows, list) else []:
@@ -445,7 +452,7 @@ def dynamic_auto_universe(exchange_info: Any, tickers: Any, settings: dict[str, 
             or item.get("quoteAsset") != "USDT"
             or base_asset in BLOCKED_AUTO_BASE_ASSETS
             or not symbol.endswith("USDT")
-            or (not use_dynamic_default and symbol not in configured)
+            or (configured is not None and symbol not in configured)
         ):
             continue
         try:
@@ -646,8 +653,8 @@ async def auto_trade_market_universe(application: Any) -> list[dict[str, Any]]:
 def candidate_is_tradeable(candidate: dict[str, Any], settings: dict[str, Any]) -> bool:
     symbol = str(candidate.get("symbol") or "").upper()
     direction = str(candidate.get("direction") or "NEUTRAL").upper()
-    allowed_symbols = {normalize_symbol(value) for value in settings.get("_auto_universe", settings.get("allowed_symbols", AUTO_TRADE_SYMBOLS))}
-    if symbol not in allowed_symbols:
+    allowed_symbols = _effective_allowed_symbols(settings)
+    if allowed_symbols is not None and symbol not in allowed_symbols:
         return False
     if direction not in {"LONG", "SHORT"} or candidate.get("status") != "SELECTED":
         return False
@@ -687,13 +694,13 @@ def automatic_risk_block(state: dict[str, Any]) -> tuple[str, str] | None:
 
 
 def select_auto_candidates(ranked: list[dict[str, Any]], settings: dict[str, Any], occupied: set[str], limit: int = MAX_OPEN_POSITIONS) -> list[dict[str, Any]]:
-    allowed_symbols = {normalize_symbol(value) for value in settings.get("_auto_universe", settings.get("allowed_symbols", AUTO_TRADE_SYMBOLS))}
+    allowed_symbols = _effective_allowed_symbols(settings)
     selected: list[dict[str, Any]] = []
     seen: set[str] = set()
     ordered = sorted(ranked, key=lambda item: float(item.get("score", item.get("opportunity_score", 0)) or 0), reverse=True)
     for candidate in ordered:
         symbol = normalize_symbol(str(candidate.get("symbol") or ""))
-        if symbol in occupied or symbol in seen or symbol not in allowed_symbols or not candidate_is_tradeable(candidate, settings):
+        if symbol in occupied or symbol in seen or (allowed_symbols is not None and symbol not in allowed_symbols) or not candidate_is_tradeable(candidate, settings):
             continue
         seen.add(symbol)
         selected.append(candidate)
