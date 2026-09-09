@@ -593,6 +593,83 @@ export default function BinanceDemo({active,symbol,analysis,chart}:{active:boole
     ? ({DAILY_LOSS_20:'GÜNLÜK ZARAR LİMİTİ',CONSECUTIVE_LOSSES:'3 ARDIŞIK ZARAR',KILL_SWITCH:'KILL SWITCH'} as Record<string,string>)[v21?.auto.pause_reason || ''] || 'RİSK NEDENİYLE DURAKLATILDI'
     : autoStatus === 'ON' ? (v21?.scanner.running ? 'TARAMA YAPIYOR' : 'AKTİF') : 'DURDURULDU'
 
+  const autoActivityCenter = useMemo(() => {
+    const auto = v21?.auto ?? {}
+    const scanner = v21?.scanner ?? {}
+    const journal = v21?.journal ?? []
+    const autoTrades = v21?.automation_trades ?? []
+    const topCandidates = scanner.top_candidates ?? []
+    const lastAutoTrade = autoTrades[0] ?? null
+    const lastOrderJournal = [...journal].find(item => item.kind === 'AUTO_ORDER' || item.source === 'AUTO_SCANNER' || String(item.reason || '').startsWith('AUTO_ORDER')) ?? null
+    const lastAutoOrder = lastAutoTrade ? {
+      time: lastAutoTrade.entry_time ?? lastOrderJournal?.created_at ?? null,
+      symbol: lastAutoTrade.symbol ?? lastOrderJournal?.symbol ?? null,
+      side: lastAutoTrade.side ?? lastOrderJournal?.side ?? null,
+      result: String(lastAutoTrade.status ?? '').toUpperCase().includes('CLOSED') || String(lastAutoTrade.status ?? '').toUpperCase().includes('KAPANDI') ? 'REJECTED' : auto.last_error ? 'ERROR' : 'SUCCESS',
+      error: auto.last_error || lastAutoTrade.trade_reason?.join(' · ') || lastOrderJournal?.message || '—',
+    } : {
+      time: lastOrderJournal?.created_at ?? null,
+      symbol: lastOrderJournal?.symbol ?? null,
+      side: lastOrderJournal?.side ?? null,
+      result: auto.last_error ? 'ERROR' : 'REJECTED',
+      error: auto.last_error || lastOrderJournal?.message || 'Henüz Auto Trade emri açılmadı.',
+    }
+
+    const openAutoPositions = (v21?.automation_trades ?? []).filter(trade => {
+      const status = String(trade.status ?? '').toUpperCase()
+      return Boolean(trade.symbol) && !['KAPANDI', 'CLOSED', 'İPTAL', 'CANCELLED'].includes(status)
+    })
+
+    const reasons: string[] = []
+    const rejectionGate = String(auto.rejection_gate || '').toUpperCase()
+    const rejectionReason = String(auto.rejection_reason || auto.last_decision || '').trim()
+    const decision = String(auto.last_decision || '').trim()
+
+    if (Number(scanner.eligible_count ?? 0) === 0 || !topCandidates.length) reasons.push('uygun aday yok')
+    if (/CONFIDENCE|LOW|GÜVEN/.test(rejectionGate) || /confidence|güven/i.test(rejectionReason) || /LOW/i.test(decision)) reasons.push('confidence düşük')
+    if (rejectionGate.includes('BEKLE') || /BEKLE/i.test(rejectionReason) || /BEKLE/i.test(decision)) reasons.push('BEKLE')
+    if (rejectionGate.includes('RISK') || /risk|zarar|LIMIT/i.test(rejectionReason) || /risk/i.test(decision)) reasons.push('risk limiti')
+    if (rejectionGate.includes('MAX') || /MAXIMUM|POZİSYON|POSITION/.test(rejectionReason) || /POZİSYON/.test(decision)) reasons.push('maksimum pozisyon sayısı')
+    if (rejectionGate.includes('DUPLICATE') || /duplicate|aynı|duble|duplicate symbol/i.test(rejectionReason)) reasons.push('duplicate symbol')
+    if (rejectionGate.includes('RISK_LEVELS') || /risk_reward|rr|R\/R|risk\/reward/i.test(rejectionReason)) reasons.push('risk/reward uygun değil')
+    if (rejectionGate && !reasons.length) reasons.push(rejectionGate.replace(/_/g, ' ').toLowerCase())
+    if (!reasons.length && auto.last_decision && !auto.enabled && !lastAutoTrade) reasons.push('Neden bilgisi backend tarafından raporlanmadı')
+    if (!reasons.length && !auto.rejection_reason && !auto.last_error && !lastAutoTrade) reasons.push('Neden bilgisi backend tarafından raporlanmadı')
+
+    const recentEvents = [...journal]
+      .filter(item => {
+        const kind = String(item.kind || '').toUpperCase()
+        const reason = String(item.reason || '').toUpperCase()
+        const message = String(item.message || '').toUpperCase()
+        const eventList = ['SCAN_STARTED', 'SCAN_COMPLETED', 'CANDIDATES_FOUND', 'CANDIDATE_REJECTED', 'AUTO_ORDER_ATTEMPT', 'AUTO_ORDER_SUCCESS', 'AUTO_ORDER_REJECTED', 'POSITION_OPENED', 'POSITION_CLOSED', 'SL', 'TP1', 'TP2', 'TP3', 'BREAK_EVEN', 'TRAILING', 'ERROR', 'PAUSED', 'AUTO_START', 'AUTO_STOP', 'NOTIFICATION']
+        if (eventList.includes(kind)) return true
+        if (eventList.some(token => reason.includes(token) || message.includes(token))) return true
+        return item.source === 'AUTO_SCANNER' || item.source === 'USER' || item.source === 'NOTIFICATION'
+      })
+      .slice(0, 20)
+      .map(item => ({
+        time: item.created_at,
+        kind: String(item.kind || item.reason || 'EVENT').toUpperCase(),
+        symbol: item.symbol || null,
+        message: item.message || item.reason || 'Olay kaydedildi.',
+      }))
+
+    return {
+      botStatus: auto.enabled ? (auto.status === 'PAUSED' ? 'DURDURULDU' : 'AKTİF') : (auto.last_error ? 'HATA' : 'DURDURULDU'),
+      heartbeat: auto.started_at || auto.last_scan || scanner.last_scan_at || auto.last_decision || null,
+      lastScan: scanner.last_scan_at || null,
+      nextScan: scanner.next_scan_at || null,
+      scanStatus: scanner.scan_status || 'BEKLEMEDE',
+      coinsScanned: Number(scanner.coins_scanned ?? 0),
+      eligibleCount: Number(scanner.eligible_count ?? scanner.selected_count ?? 0),
+      topCandidates,
+      lastAutoOrder,
+      openAutoPositions,
+      reasons: reasons.length ? reasons : ['Neden bilgisi backend tarafından raporlanmadı'],
+      recentEvents,
+    }
+  }, [v21])
+
   const formatHealthState = (state: string) => {
     if (state === 'HEALTHY') return 'healthy'
     if (state === 'DEGRADED') return 'degraded'
@@ -662,6 +739,88 @@ export default function BinanceDemo({active,symbol,analysis,chart}:{active:boole
         <div><small>BİLDİRİM</small><strong>{v21?.notifications?.unread ?? 0}</strong><span>Demo event</span></div>
       </div>
       <div className="v21AutoBotCandidates">{v21?.scanner.top_candidates.length ? v21.scanner.top_candidates.slice(0,3).map((candidate,index) => <span key={candidate.symbol}><b>{index + 1}. {candidate.symbol}</b><em>{candidate.direction} · {candidate.score}</em></span>) : <span>Sinyal bekleniyor.</span>}</div>
+    </section>
+
+    <section className="v21AutoActivityCenter" aria-label="Auto Trade activity center">
+      <header className="v21WorkspaceHead compactHead">
+        <div>
+          <span>AUTO TRADE DIAGNOSTICS</span>
+          <h2>AUTO TRADE AKTİVİTE MERKEZİ</h2>
+        </div>
+        <b className={autoActivityCenter.botStatus === 'AKTİF' ? 'v21Running' : autoActivityCenter.botStatus === 'HATA' ? 'demoLoss' : 'v21Stopped'}>{autoActivityCenter.botStatus}</b>
+      </header>
+      <div className="v21AutoActivityGrid">
+        <article className="v21AutoActivityCard">
+          <header><span>BOT DURUMU</span><h3>Auto Trade durumu</h3></header>
+          <div className="v21AutoActivityMetricRow">
+            <div><small>DURUM</small><b className={autoActivityCenter.botStatus === 'AKTİF' ? 'demoProfit' : autoActivityCenter.botStatus === 'HATA' ? 'demoLoss' : ''}>{autoActivityCenter.botStatus}</b></div>
+            <div><small>SON HEARTBEAT</small><b>{autoActivityCenter.heartbeat ? stamp(autoActivityCenter.heartbeat) : '—'}</b></div>
+          </div>
+          <p className="v21AutoActivityNote">{v21?.auto.last_decision || 'Yeni otomasyon kararı bekleniyor.'}</p>
+        </article>
+
+        <article className="v21AutoActivityCard">
+          <header><span>TARAMA DURUMU</span><h3>Scanner state</h3></header>
+          <div className="v21AutoActivityMetricRow">
+            <div><small>SON TARAMA</small><b>{autoActivityCenter.lastScan ? stamp(autoActivityCenter.lastScan) : '—'}</b></div>
+            <div><small>SONRAKİ TARAMA</small><b>{autoActivityCenter.nextScan ? stamp(autoActivityCenter.nextScan) : '—'}</b></div>
+          </div>
+          <div className="v21AutoActivityMetricRow smallGrid">
+            <div><small>DURUM</small><b>{autoActivityCenter.scanStatus === 'TAMAMLANDI' ? 'COMPLETED' : autoActivityCenter.scanStatus === 'TARAMA' ? 'RUNNING' : autoActivityCenter.scanStatus === 'HATA' ? 'ERROR' : 'BEKLEMEDE'}</b></div>
+            <div><small>TARANAN COIN</small><b>{autoActivityCenter.coinsScanned}</b></div>
+            <div><small>GEÇERLİ ADAY</small><b>{autoActivityCenter.eligibleCount}</b></div>
+          </div>
+        </article>
+
+        <article className="v21AutoActivityCard">
+          <header><span>SON SEÇİM</span><h3>Top 3 candidate</h3></header>
+          {autoActivityCenter.topCandidates.length ? <div className="v21AutoActivityCandidates">{autoActivityCenter.topCandidates.slice(0, 3).map(candidate => <article key={candidate.symbol} className="v21AutoActivityCandidate">
+            <header><strong>{candidate.symbol}</strong><span className={candidate.direction === 'LONG' ? 'v21AutoLong' : 'v21AutoShort'}>{candidate.direction}</span></header>
+            <div className="v21AutoActivityCandidateMeta">
+              <span><small>SCORE</small><b>{candidate.score}</b></span>
+              <span><small>GÜVEN</small><b>{candidate.confidence}</b></span>
+            </div>
+            <div className="v21AutoActivityCandidateLevels">
+              <span><small>ENTRY</small><b>{fmt(candidate.entry)}</b></span>
+              <span><small>STOP</small><b>{fmt(candidate.stop_loss)}</b></span>
+              <span><small>TP1</small><b>{fmt(candidate.tp1)}</b></span>
+              <span><small>TP2</small><b>{fmt(candidate.tp2)}</b></span>
+              <span><small>TP3</small><b>{fmt(candidate.tp3)}</b></span>
+            </div>
+          </article>)}</div> : <div className="v21AutoActivityEmpty">Uygun işlem adayı bulunamadı.</div>}
+        </article>
+
+        <article className="v21AutoActivityCard">
+          <header><span>EMİR DURUMU</span><h3>Auto order status</h3></header>
+          {autoActivityCenter.lastAutoOrder && autoActivityCenter.lastAutoOrder.time ? <div className="v21AutoActivityMetricRow">
+            <div><small>SON AUTO EMİR</small><b>{stamp(autoActivityCenter.lastAutoOrder.time)}</b></div>
+            <div><small>SEMBOL</small><b>{autoActivityCenter.lastAutoOrder.symbol || '—'}</b></div>
+          </div> : <div className="v21AutoActivityEmpty">Henüz Auto Trade emri açılmadı.</div>}
+          {autoActivityCenter.lastAutoOrder && autoActivityCenter.lastAutoOrder.time ? <div className="v21AutoActivityMetricRow smallGrid">
+            <div><small>YÖN</small><b>{autoActivityCenter.lastAutoOrder.side || '—'}</b></div>
+            <div><small>SONUÇ</small><b className={autoActivityCenter.lastAutoOrder.result === 'SUCCESS' ? 'demoProfit' : autoActivityCenter.lastAutoOrder.result === 'REJECTED' || autoActivityCenter.lastAutoOrder.result === 'ERROR' ? 'demoLoss' : ''}>{autoActivityCenter.lastAutoOrder.result || 'UNKNOWN'}</b></div>
+            <div className="fullRow"><small>HATA / AÇIKLAMA</small><b>{autoActivityCenter.lastAutoOrder.error || '—'}</b></div>
+          </div> : null}
+        </article>
+
+        <article className="v21AutoActivityCard wideCard">
+          <header><span>POZİSYONLAR</span><h3>Open AUTO positions</h3></header>
+          <div className="v21AutoActivityMetricRow">
+            <div><small>AÇIK AUTO POZİSYON</small><b>{autoActivityCenter.openAutoPositions.length}</b></div>
+          </div>
+          {autoActivityCenter.openAutoPositions.length ? <ul className="v21AutoActivityPositionList">{autoActivityCenter.openAutoPositions.map(trade => <li key={`${trade.symbol}-${trade.side}`}><span>{trade.symbol}</span><strong>{trade.side}</strong><em className={Number(trade.unrealized_pnl ?? 0) >= 0 ? 'demoProfit' : 'demoLoss'}>{Number(trade.unrealized_pnl ?? 0) >= 0 ? '+' : ''}{fmt(Number(trade.unrealized_pnl ?? 0))} USDT</em></li>)}</ul> : <div className="v21AutoActivityEmpty">Açık AUTO pozisyon yok.</div>}
+        </article>
+
+        <article className="v21AutoActivityCard wideCard">
+          <header><span>ÖNCEKİ SEBEP DİYAGRAMI</span><h3>Why no trade?</h3></header>
+          <ul className="v21AutoActivityReasonList">{autoActivityCenter.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
+        </article>
+
+        <article className="v21AutoActivityCard fullWidthCard">
+          <header><span>SON 20 AUTO TRADE OLAYI</span><h3>Time-ordered activity stream</h3></header>
+          {autoActivityCenter.recentEvents.length ? <ul className="v21AutoActivityEventList">{autoActivityCenter.recentEvents.map((event, index) => <li key={`${event.kind}-${event.time ?? index}`}><time>{event.time ? stamp(event.time) : '—'}</time><strong>{event.kind}</strong><span>{event.symbol || 'SYSTEM'}</span><small>{event.message}</small></li>)}</ul> : <div className="v21AutoActivityEmpty">Henüz Auto Trade olayı kaydedilmedi.</div>}
+        </article>
+      </div>
     </section>
 
     <section className="v21CockpitSummary" aria-label="Paper Trading Cockpit Summary">
