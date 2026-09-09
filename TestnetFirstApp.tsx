@@ -148,6 +148,7 @@ export default function TestnetFirstApp() {
   const [view,setView] = useState<View>(initialView)
   const [markets,setMarkets] = useState<Market[]>([])
   const [symbol,setSymbol] = useState('BTCUSDT')
+  const [marketQuery,setMarketQuery] = useState('')
   const [interval,setInterval] = useState('15m')
   const [analysis,setAnalysis] = useState<Analysis|null>(null)
   const [analysisProgress,setAnalysisProgress] = useState(0)
