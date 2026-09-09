@@ -110,7 +110,7 @@ export default function TestnetFirstApp() {
     setLoading(true)
     try {
       const [marketResponse,healthResponse] = await Promise.all([
-        fetch(`${API_BASE}/v21/markets`),
+        fetch(`${API_BASE}/v21/markets?limit=100`),
         fetch(`${API_BASE}/health`),
       ])
       if (marketResponse.ok) {

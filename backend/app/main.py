@@ -1029,7 +1029,7 @@ async def web_access_check():
 
 
 @app.get("/api/markets")
-async def markets(limit: int = Query(12, ge=1, le=200)):
+async def markets(limit: int = Query(100, ge=1, le=200)):
     try:
         response = await app.state.http.get(f"{FUTURES_MARKET_DATA_API}/fapi/v1/ticker/24hr")
         response.raise_for_status()
@@ -3766,7 +3766,7 @@ async def smart_scan(limit: int = Query(18, ge=6, le=30), interval: str = "15m")
 
 
 @app.get("/api/analysis-universe")
-async def analysis_universe(interval: str = "15m", limit: int = Query(24, ge=1, le=24)):
+async def analysis_universe(interval: str = "15m", limit: int = Query(100, ge=1, le=100)):
     """Return cached, read-only technical snapshots for eligible USDT pairs."""
     if interval not in ALLOWED_INTERVALS:
         raise HTTPException(400, "Desteklenmeyen zaman dilimi")
