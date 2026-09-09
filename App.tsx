@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { CandlestickSeries, ColorType, createChart, HistogramSeries, LineSeries } from 'lightweight-charts'
-import { Activity, Bot, BrainCircuit, FlaskConical, Grid3X3, History, LayoutDashboard, Power, RadioTower, RefreshCw, Shield, ShieldCheck, TrendingUp } from 'lucide-react'
+import { Activity, Bot, BrainCircuit, ChevronDown, FlaskConical, Grid3X3, History, LayoutDashboard, Power, RadioTower, RefreshCw, Search, Shield, ShieldCheck, TrendingUp, X } from 'lucide-react'
 import { API_BASE } from './api'
 
 const BinanceDemo = lazy(() => import('./BinanceDemo'))
@@ -382,6 +382,8 @@ export default function App() {
   const [paperBot, setPaperBot] = useState<PaperBotState|null>(null)
   const [v20Command, setV20Command] = useState<V20Command|null>(null)
   const [query, setQuery] = useState('')
+  const [marketQuery, setMarketQuery] = useState('')
+  const [marketSelectorOpen, setMarketSelectorOpen] = useState(false)
   const [tab, setTab] = useState<'TÜMÜ'|'LONG'|'SHORT'|'KIRILIM'>('TÜMÜ')
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('dashboard')
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('dashboard')
@@ -1059,6 +1061,7 @@ export default function App() {
     finally { setV7Busy(false) }
   }
   const active = markets.find(market => market.symbol === symbol)
+  const filteredMarkets = markets.filter(market => `${market.display} ${market.symbol}`.toUpperCase().includes(marketQuery.trim().toUpperCase()))
   const filtered = markets.filter(market => {
     const queryMatch = market.display.includes(query.toUpperCase())
     const tabMatch = tab === 'TÜMÜ' || market.direction === tab || (tab === 'KIRILIM' && market.breakout)
@@ -1192,13 +1195,43 @@ export default function App() {
     <section className={`workspace${panelVisibility('dashboard')}`}>
       <aside className="panel scanner">
         <div className="panelTitle"><Activity/> AKILLI PİYASA TARAYICI</div>
-        <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Coin ara…"/>
+        <div className="marketSelectorCompact">
+          <button type="button" className="marketSelectorTrigger" aria-expanded={marketSelectorOpen} onClick={() => setMarketSelectorOpen(value => !value)}>
+            <div className="marketSelectorMeta">
+              <span>SEÇİLİ COİN</span>
+              <b>{active?.display || symbol.replace('USDT', '/USDT')}</b>
+            </div>
+            <div className="marketSelectorLive">
+              <strong>{fmt(livePrice ?? active?.price)}</strong>
+              <small className={(active?.change ?? 0) >= 0 ? 'up' : 'down'}>{(active?.change ?? 0) >= 0 ? '+' : ''}{(active?.change ?? 0).toFixed(2)}%</small>
+            </div>
+            <ChevronDown/>
+          </button>
+          {marketSelectorOpen && <div className="marketSelectorPopover" role="dialog" aria-label="Market selector popover">
+            <div className="marketSelectorSearch">
+              <Search/>
+              <input value={marketQuery} onChange={event => setMarketQuery(event.target.value)} placeholder="Search symbol..." aria-label="Search symbol" autoFocus />
+              <button type="button" aria-label="Close market search" onClick={() => { setMarketQuery(''); setMarketSelectorOpen(false) }}>
+                <X/>
+              </button>
+            </div>
+            <div className="marketSelectorList">
+              {filteredMarkets.length ? filteredMarkets.map(market => <button key={market.symbol} type="button" className={market.symbol === symbol ? 'marketSelectorItem active' : 'marketSelectorItem'} onClick={() => { setSymbol(market.symbol); setMarketQuery(''); setMarketSelectorOpen(false) }}>
+                <span className="marketSelectorItemSymbol">
+                  <b>{market.display}</b>
+                  <small>{market.symbol}</small>
+                </span>
+                <span className="marketSelectorStats">
+                  <span className="marketSelectorPrice">{fmt(market.price)}</span>
+                  <span className={market.change >= 0 ? 'marketSelectorChange up' : 'marketSelectorChange down'}>{market.change >= 0 ? '+' : ''}{market.change.toFixed(2)}%</span>
+                </span>
+              </button>) : <p className="marketSelectorEmpty">No market found.</p>}
+            </div>
+          </div>}
+        </div>
         <div className="scanTabs">{(['TÜMÜ','LONG','SHORT','KIRILIM'] as const).map(item => <button key={item} className={tab === item ? 'activeTab' : ''} onClick={() => setTab(item)}>{item}</button>)}</div>
         <button className="scanButton" onClick={scan} disabled={scanning}><RefreshCw className={scanning ? 'spin' : ''}/>{scanning ? 'TARANIYOR…' : 'PİYASAYI TARA'}</button>
         <small className="scanMessage">{scanMessage}</small>
-        {filtered.map(market => <button key={market.symbol} className={market.symbol === symbol ? 'market active' : 'market'} onClick={() => setSymbol(market.symbol)}>
-          <b>{market.display}</b><span>{fmt(market.price)}</span><em className={market.direction === 'SHORT' ? 'down' : market.direction === 'LONG' ? 'up' : ''}>{market.direction || '—'} %{market.confidence ?? '—'}</em>
-        </button>)}
       </aside>
       <div className="center">
         <div className="panel ticker"><div><small>SEÇİLEN PİYASA</small><h2>{active?.display || 'BTC/USDT'}</h2></div><strong>{fmt(livePrice ?? active?.price)}</strong><span className={(active?.change || 0) >= 0 ? 'up' : 'down'}>{active?.change.toFixed(2) || '0.00'}%</span><div className={signalGate?.entry_allowed ? 'gateBadge approved' : 'gateBadge'} title={signalGate?.reason}><small>MUM KAPANIŞ KAPISI</small><b>{signalGate?.status ?? 'ÖLÇÜLÜYOR'}</b><span>Sonraki mum: {gateCountdown}</span></div><div className={freshness?.auto_allowed ? 'freshBadge approved' : 'freshBadge'} title={freshness?.reason}><small>FİYAT SAPMA KALKANI</small><b>{freshness?.status ?? 'ÖLÇÜLÜYOR'}</b><span>Δ {freshness?.drift_atr ?? '—'} ATR</span></div><div className={liquidity?.auto_allowed ? 'liquidityBadge approved' : 'liquidityBadge'} title={liquidity?.reason}><small>EMİR DEFTERİ KALKANI</small><b>{liquidity?.mode ?? 'ÖLÇÜLÜYOR'}</b><span>Spread {liquidity?.spread_bps?.toFixed(1) ?? '—'} bp</span></div><div className="ranges">{['1m','5m','15m','1h','4h','1d'].map(item => <button key={item} className={item === interval ? 'selected' : ''} onClick={() => setInterval(item)}>{item}</button>)}</div></div>
